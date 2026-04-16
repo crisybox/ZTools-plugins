@@ -5,9 +5,9 @@
 set -e  # 遇到错误立即退出
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-# 脚本所在目录即为插件源码目录
-# dist 输出到 git 根目录（脚本所在目录的父目录）
-DIST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)/dist"
+# 脚本所在目录即为插件源码目录（也是 git 根目录）
+# dist 输出到脚本所在目录下的 dist/
+DIST_DIR="$SCRIPT_DIR/dist"
 
 echo "开始构建沙拉查词 ZTools 插件..."
 
