@@ -55,7 +55,7 @@ import Header from '../components/Header/index.vue'
           <el-card class="links-card">
             <h2>相关链接</h2>
             <div class="link-list">
-              <a href="https://github.com" target="_blank" class="link-item">
+              <a href="https://github.com/wangbin-blog/ztools-githubproxy" target="_blank" class="link-item">
                 <span>GitHub</span>
               </a>
             </div>

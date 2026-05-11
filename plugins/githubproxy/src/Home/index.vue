@@ -187,6 +187,10 @@ const handleLaunchParam = async (param: { code?: string; payload?: string }) => 
     await copyToClipboard(gitCloneCommand.value)    
     window.ztools.hideMainWindow(true)
     window.ztools.outPlugin(true)
+  }else if (param.code === 'copygiturl') {
+    await copyToClipboard(directUrl.value)    
+    window.ztools.hideMainWindow(true)
+    window.ztools.outPlugin(true)
   }
 }
 

@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.4](https://github.com/ZToolsCenter/ZTools-plugins) - 2026-05-11
+
+### Fixed
+
+- **深色主题样式优化**：进一步完善深色主题下的组件样式，修复输入框、表格、卡片等组件的边框和背景色问题
+- **代码质量改进**：修复多处代码检测问题，包括变量定义、空值检查、JSON 解析错误处理等
+
+### Optimized
+
+- **HTTP 重定向处理**：增强对 GitHub 文件下载链接的重定向支持，支持自动跟随 301/302/307/308 状态码重定向到 objects.githubusercontent.com 等域名
+- **代码健壮性**：为 JSON 解析添加 try-catch 包裹，防止数据格式错误导致崩溃
+
+### Technical
+
+- 代码审查问题修复：处理代码检测工具发现的各类问题
+- 优化代码结构，提升可维护性
+
 ## [1.0.3](https://github.com/ZToolsCenter/ZTools-plugins) - 2026-05-11
 
 ### Fixed
