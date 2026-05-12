@@ -1,4 +1,5 @@
 import { TOOL_MAP } from '../config/tools.js'
+import { renderIcon } from './icons.js'
 
 function isMergeProcessing(state) {
   if (!state?.isProcessing) return false
@@ -26,7 +27,7 @@ export function renderTopBar(state) {
     <header class="topbar">
       <div class="topbar__heading">
         <button type="button" class="icon-button topbar__toggle" data-action="toggle-sidebar" data-tooltip="${sidebarLabel}" aria-label="${sidebarLabel}">
-          <span class="material-symbols-outlined">${sidebarIcon}</span>
+          ${renderIcon(sidebarIcon)}
         </button>
         <div class="topbar__title-block">
           <div class="topbar__title">${tool.label}</div>

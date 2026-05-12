@@ -1,5 +1,6 @@
 ﻿import { TOOL_MAP } from '../config/tools.js'
 import { getFormatCapability } from '../services/ztools-bridge.js'
+import { renderIcon } from '../components/icons.js'
 
 const FORMAT_OPTIONS = ['PNG', 'JPEG', 'JPG', 'WebP', 'TIFF', 'AVIF', 'GIF', 'BMP', 'ICO']
 const FLIP_OUTPUT_OPTIONS = [['Keep Original', '保持原格式'], ...FORMAT_OPTIONS]
@@ -59,6 +60,7 @@ const CROP_RATIOS = [
   ['21:9', '21:9'],
   ['Custom', '自定义'],
 ]
+const DEFAULT_ROTATE_PRESET_ANGLES = [-135, -90, -45, 0, 45, 90, 135, 180]
 
 export const MANUAL_CROP_RATIOS = [
   { label: '1:1', value: '1:1' },
@@ -66,6 +68,19 @@ export const MANUAL_CROP_RATIOS = [
   { label: '16:9', value: '16:9' },
   { label: '9:16', value: '9:16' },
 ]
+
+function normalizeRotatePresetAngles(value) {
+  const source = Array.isArray(value) && value.length ? value : DEFAULT_ROTATE_PRESET_ANGLES
+  const seen = new Set()
+  const next = []
+  for (let index = 0; index < source.length; index += 1) {
+    const numeric = Math.max(-360, Math.min(360, Math.round(Number(source[index]) || 0)))
+    if (seen.has(numeric)) continue
+    seen.add(numeric)
+    next.push(numeric)
+  }
+  return next
+}
 
 export function renderCompressionPage(toolId, state) {
   const config = state.configs[toolId]
@@ -83,7 +98,7 @@ export function renderToolHero(toolId) {
   const tool = TOOL_MAP[toolId]
   return `
     <div class="tool-hero">
-      <span class="material-symbols-outlined tool-hero__icon">${tool?.icon || 'tune'}</span>
+      ${renderIcon(tool?.icon || 'tune', 'tool-hero__icon')}
       <div>
         <div class="hero-title">${tool?.label || '工具配置'}</div>
       </div>
@@ -96,6 +111,7 @@ export function renderManualCropQuickRatios(activeRatio) {
     <div class="manual-ratio-row">
       ${MANUAL_CROP_RATIOS.map((ratio) => `
         <button
+          type="button"
           class="secondary-button secondary-button--compact ${activeRatio === ratio.value ? 'is-active' : ''}"
           data-action="set-manual-ratio"
           data-value="${ratio.value}"
@@ -111,8 +127,8 @@ function renderPresetFooter(toolId, state) {
   const presets = state.presetsByTool?.[toolId] || []
   return `
     <div class="panel-footer-actions">
-      <button class="queue-item__action" data-action="open-preset-dialog" data-tool-id="${toolId}">使用预设</button>
-      <button class="queue-item__action" data-action="save-preset" data-tool-id="${toolId}">保存预设</button>
+      <button type="button" class="queue-item__action" data-action="open-preset-dialog" data-tool-id="${toolId}">使用预设</button>
+      <button type="button" class="queue-item__action" data-action="save-preset" data-tool-id="${toolId}">保存预设</button>
     </div>
   `
 }
@@ -216,8 +232,8 @@ function renderResizeConfig(config) {
   const sizeMode = config.sizeMode || 'manual'
   const useReferenceSize = sizeMode !== 'manual'
   const referenceHint = sizeMode === 'max'
-    ? '自动取当前图片列表中最大的宽度和最大的高度'
-    : '自动取当前图片列表中最小的宽度和最小的高度'
+    ? '自动取当前图片列表中最大的宽度和最大的高度，并统一输出到这一组尺寸。'
+    : '自动取当前图片列表中最小的宽度和最小的高度，并统一输出到这一组尺寸。'
   return renderSettingsSection(`
     ${renderSegmented('resize', 'sizeMode', sizeMode, [
       ['manual', '手动设置'],
@@ -236,11 +252,11 @@ function renderResizeConfig(config) {
         <span class="setting-row__hint setting-row__hint--compression">${referenceHint}</span>
       </label>
     ` : ''}
-    ${renderToggleRow('锁定比例', '', 'resize', 'lockAspectRatio', config.lockAspectRatio)}
+    ${renderToggleRow('锁定比例', useReferenceSize ? '对齐最大/最小时会直接输出统一尺寸，此选项不会生效。' : '', 'resize', 'lockAspectRatio', config.lockAspectRatio, useReferenceSize)}
     <div>
       <div class="card-label" style="margin-bottom:6px;">常用尺寸</div>
       <div class="preset-row">
-        ${RESIZE_PRESETS.map((preset) => `<button class="secondary-button secondary-button--compact watermark-picker-button" data-action="apply-resize-preset" data-width="${preset.width}" data-height="${preset.height}">${preset.label}</button>`).join('')}
+        ${RESIZE_PRESETS.map((preset) => `<button type="button" class="secondary-button secondary-button--compact watermark-picker-button" data-action="apply-resize-preset" data-width="${preset.width}" data-height="${preset.height}">${preset.label}</button>`).join('')}
       </div>
     </div>
     ${renderQualityField({ toolId: 'resize', value: Number(config.quality) || 90 })}
@@ -279,7 +295,7 @@ function renderWatermarkConfig(config) {
         <div class="card-label" style="margin-bottom:6px;">锚点位置</div>
         <div class="position-grid">
           ${WATERMARK_POSITIONS.map((position) => `
-            <button class="position-dot ${config.position === position ? 'is-active' : ''}" data-action="set-config" data-tool-id="watermark" data-key="position" data-value="${position}" data-tooltip="${WATERMARK_POSITION_LABELS[position] || position}" aria-label="${WATERMARK_POSITION_LABELS[position] || position}">
+            <button type="button" class="position-dot ${config.position === position ? 'is-active' : ''}" data-action="set-config" data-tool-id="watermark" data-key="position" data-value="${position}" data-tooltip="${WATERMARK_POSITION_LABELS[position] || position}" aria-label="${WATERMARK_POSITION_LABELS[position] || position}">
               <span></span>
             </button>
           `).join('')}
@@ -353,6 +369,7 @@ function renderCropConfig(config) {
 function renderRotateConfig(config) {
   const signedAngle = Number(config.angle) || 0
   const normalizedAngle = ((signedAngle % 360) + 360) % 360
+  const presetAngles = normalizeRotatePresetAngles(config.presetAngles)
   const angleChars = Math.max(1, String(signedAngle).length)
   const angleWidth = `${Math.max(1.4, angleChars * 0.9)}ch`
   const dialRadians = (normalizedAngle - 90) * (Math.PI / 180)
@@ -384,15 +401,19 @@ function renderRotateConfig(config) {
           />
           <span class="rotate-dial__value-unit">°</span>
         </div>
-        <button class="rotate-dial__knob" data-action="drag-rotate" data-tool-id="rotate" style="left:${knobX}px;top:${knobY}px;" aria-label="拖动旋转角度"></button>
+        <button type="button" class="rotate-dial__knob" data-action="drag-rotate" data-tool-id="rotate" style="left:${knobX}px;top:${knobY}px;" aria-label="拖动旋转角度"></button>
       </div>
       <div class="rotate-card__summary">当前角度 ${signedAngle}°</div>
     </div>
     <div>
       <div class="card-label" style="margin-bottom:6px;">常用角度</div>
       <div class="preset-row">
-        ${[-135, -90, -45, 0, 45, 90, 135, 180].map((angle) => `<button class="secondary-button secondary-button--compact watermark-picker-button" data-action="set-config" data-tool-id="rotate" data-key="angle" data-value="${angle}">${angle}°</button>`).join('')}
+        ${presetAngles.map((angle) => `<button type="button" class="secondary-button secondary-button--compact watermark-picker-button" data-action="set-config" data-tool-id="rotate" data-key="angle" data-value="${angle}">${angle}°</button>`).join('')}
       </div>
+    </div>
+    <div class="rotate-preset-bar">
+      <button type="button" class="secondary-button secondary-button--compact watermark-picker-button" data-action="open-rotate-preset-dialog">常用角度调整</button>
+      <span class="setting-row__hint">在弹框里增删、排序或恢复默认常用角度。</span>
     </div>
     ${renderToggleRow('自动裁切画布', '', 'rotate', 'autoCrop', config.autoCrop)}
     ${renderToggleRow('保持比例', '', 'rotate', 'keepAspectRatio', config.keepAspectRatio)}
@@ -513,7 +534,7 @@ function renderSegmented(toolId, key, activeValue, options) {
   return `
     <div class="segmented">
       ${options.map(([value, label]) => `
-        <button class="${activeValue === value ? 'is-active' : ''}" data-action="set-config" data-tool-id="${toolId}" data-key="${key}" data-value="${value}">${label}</button>
+        <button type="button" class="${activeValue === value ? 'is-active' : ''}" data-action="set-config" data-tool-id="${toolId}" data-key="${key}" data-value="${value}">${label}</button>
       `).join('')}
     </div>
   `
@@ -564,7 +585,7 @@ function renderSelectField({ label, toolId, key, value, options, disabled = fals
       <div class="select-shell">
         <button type="button" class="select-shell__value" data-action="toggle-config-select" aria-haspopup="listbox" aria-expanded="false" ${disabled ? 'disabled' : ''}>
           <span class="select-shell__text">${escapeAttribute(activeOption[1])}</span>
-          <span class="material-symbols-outlined select-shell__icon">expand_more</span>
+          ${renderIcon('expand_more', 'select-shell__icon')}
         </button>
         <div class="select-shell__menu" role="listbox">
           ${normalizedOptions.map((option) => `
@@ -680,7 +701,7 @@ function renderToggleRow(label, hint, toolId, key, checked, disabled = false) {
         <div class="toggle-card__label">${label}</div>
         ${hint ? `<div class="setting-row__hint">${hint}</div>` : ''}
       </div>
-      <button class="switch ${checked ? 'is-on' : ''}" data-action="toggle-config" data-tool-id="${toolId}" data-key="${key}" ${disabled ? 'disabled aria-disabled="true"' : ''}></button>
+      <button type="button" class="switch ${checked ? 'is-on' : ''}" data-action="toggle-config" data-tool-id="${toolId}" data-key="${key}" ${disabled ? 'disabled aria-disabled="true"' : ''}></button>
     </div>
   `
 }

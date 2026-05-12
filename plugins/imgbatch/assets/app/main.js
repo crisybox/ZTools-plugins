@@ -37,6 +37,7 @@ import {
 } from './lib/manual-crop-flow.js'
 import { updateManualCropSummaryResultView } from './lib/manual-crop-results.js'
 import { createManualCropRuntime } from './lib/manual-crop-runtime.js'
+import { renderIconSvg } from './components/icons.js'
 import { getFormatCapability } from './services/ztools-bridge.js'
 import { appendAssets, applyRunResult, batchStateUpdates, dismissNotification, getAssetById, getAssetIndexById, getState, moveAsset, moveAssetToTarget, pushNotification, removeAsset, replaceConfig, setActiveTool, setConfirmDialog, setPresetDialog, setPreviewModal, setResultView, setSearchQuery, setSettingsDialog, setState, setToolPresets, subscribe, updateAssetListThumbnail, updateConfig, updateSettings } from './state/store.js'
 import { cancelRun, checkStagedFiles, cleanupPreviewCache, clearPreviewCacheDirectory, createAssetDisplayUrl, deletePreset, getLaunchInputs, importItems, loadPresets, loadSettings, materializePreviewResults, openInputDialog, prepareRunPayload, regenerateQueueThumbnails, renamePreset, resolveInputPaths, revealPath, replaceOriginals, runTool, saveAllStagedResults, savePreset, saveSettings, saveStagedResult, showMainWindow, stageToolPreview, subscribeLaunchInputs, subscribeQueueThumbnails } from './services/ztools-bridge.js'
@@ -58,6 +59,7 @@ const MANUAL_CROP_RATIO_ORDER = [
 ]
 const SETTINGS_TOOL_ID = 'settings'
 const PREVIEW_CACHE_LIMIT = 12
+const DEFAULT_ROTATE_PRESET_ANGLES = [-135, -90, -45, 0, 45, 90, 135, 180]
 const WATERMARK_POSITION_LABELS = {
   'top-left': '左上',
   'top-center': '上方居中',
@@ -297,6 +299,29 @@ function updatePresetDialog(patch) {
   setPresetDialog(next)
 }
 
+function getPanelScrollNode(root = app) {
+  return root?.querySelector?.('[data-scroll-role="panel"]') || null
+}
+
+function capturePanelScrollPosition(root = app) {
+  const panelNode = getPanelScrollNode(root)
+  if (!panelNode) return null
+  return { scrollTop: Math.max(0, panelNode.scrollTop || 0) }
+}
+
+function restorePanelScrollPosition(snapshot, root = app) {
+  if (!snapshot) return
+  const apply = () => {
+    const panelNode = getPanelScrollNode(root)
+    if (!panelNode) return
+    if (Math.abs((panelNode.scrollTop || 0) - snapshot.scrollTop) > 1) {
+      panelNode.scrollTop = snapshot.scrollTop
+    }
+  }
+  apply()
+  requestAnimationFrame(apply)
+}
+
 function normalizeMeasureToggleValue(value, nextUnit) {
   const raw = String(value ?? '').trim()
   if (!raw) return nextUnit === '%' ? '%' : 'px'
@@ -389,6 +414,16 @@ function openSavePresetDialog(toolId) {
     name: '',
     selectedPresetId: '',
     setAsDefault: false,
+  })
+}
+
+function openRotatePresetDialog() {
+  setPresetDialog({
+    visible: true,
+    mode: 'rotate-presets',
+    toolId: 'rotate',
+    angleInput: '',
+    presetAnglesDraft: normalizeRotatePresetAngles(getState().configs.rotate?.presetAngles),
   })
 }
 
@@ -560,6 +595,19 @@ function confirmReplaceCurrentOriginals() {
 
 function isPreviewableTool(toolId) {
   return PREVIEWABLE_TOOLS.has(toolId)
+}
+
+function updateRotatePresetDialog(patch) {
+  const dialog = getState().presetDialog
+  if (!dialog || dialog.mode !== 'rotate-presets') return
+  updatePresetDialog(patch)
+}
+
+function moveArrayItem(list, fromIndex, toIndex) {
+  const next = [...list]
+  const [item] = next.splice(fromIndex, 1)
+  next.splice(toIndex, 0, item)
+  return next
 }
 
 function getCurrentStagedItems(activeTool, assets) {
@@ -1761,7 +1809,7 @@ function syncTopBarRoot(state, mode = getAppShellMode(state)) {
 
   const topbar = root.querySelector('.topbar')
   const toggleButton = root.querySelector('.topbar__toggle')
-  const toggleIcon = toggleButton?.querySelector('.material-symbols-outlined')
+  const toggleIcon = toggleButton?.querySelector('.app-icon')
   const titleNode = root.querySelector('.topbar__title')
   const meta = root.querySelector('.topbar__meta')
   const processButton = root.querySelector('[data-action="process-current"]')
@@ -1791,7 +1839,10 @@ function syncTopBarRoot(state, mode = getAppShellMode(state)) {
   if (titleNode.textContent !== toolLabel) titleNode.textContent = toolLabel
   if (toggleButton.dataset.tooltip !== sidebarLabel) toggleButton.dataset.tooltip = sidebarLabel
   if (toggleButton.getAttribute('aria-label') !== sidebarLabel) toggleButton.setAttribute('aria-label', sidebarLabel)
-  if (toggleIcon.textContent !== sidebarIcon) toggleIcon.textContent = sidebarIcon
+  if (toggleIcon.dataset.icon !== sidebarIcon) {
+    toggleIcon.dataset.icon = sidebarIcon
+    toggleIcon.innerHTML = renderIconSvg(sidebarIcon)
+  }
 
   let stopButton = root.querySelector('[data-action="cancel-current-run"]')
   if (state.isProcessing) {
@@ -2399,8 +2450,10 @@ function render(state) {
     const reuseQueueDuringWorkspaceRefresh = canPreserveQueueDuringWorkspaceRefresh
     if (reuseQueueDuringWorkspaceRefresh) {
       shouldCaptureWorkspaceSnapshot = false
+      const panelScrollSnapshot = capturePanelScrollPosition()
       const { root, changed } = setRootMarkup('panel', renderToolPage(state.activeTool, state))
       if (root && changed) tooltipRoots.push(root)
+      restorePanelScrollPosition(panelScrollSnapshot)
       queueQueueItemPatch()
       effectiveQueueChanged = false
     } else {
@@ -3363,6 +3416,11 @@ function attachGlobalEvents() {
       return
     }
 
+    if (action === 'open-rotate-preset-dialog') {
+      openRotatePresetDialog()
+      return
+    }
+
     if (action === 'close-preset-dialog') {
       const clickedInsideDialog = !!event.target.closest('.app-modal__dialog')
       const clickedCloseIcon = !!event.target.closest('.app-modal__close')
@@ -3492,6 +3550,74 @@ function attachGlobalEvents() {
       })
       return
     }
+
+    if (action === 'add-rotate-preset-dialog-item') {
+      const dialog = getState().presetDialog
+      if (!dialog || dialog.mode !== 'rotate-presets') return
+      const angle = normalizeRotatePresetAngleValue(dialog.angleInput)
+      if (angle === null) {
+        notify({ type: 'error', message: '请输入 -360 到 360 之间的整数角度。' })
+        return
+      }
+      const presetAngles = normalizeRotatePresetAngles(dialog.presetAnglesDraft)
+      if (presetAngles.includes(angle)) {
+        notify({ type: 'info', message: `${angle}° 已经在常用角度里。` })
+        return
+      }
+      updateRotatePresetDialog({ presetAnglesDraft: [...presetAngles, angle], angleInput: '' })
+      return
+    }
+
+    if (action === 'remove-rotate-preset-dialog-item') {
+      const dialog = getState().presetDialog
+      if (!dialog || dialog.mode !== 'rotate-presets') return
+      const index = Number(target.dataset.index)
+      if (!Number.isInteger(index) || index < 0) return
+      const presetAngles = normalizeRotatePresetAngles(dialog.presetAnglesDraft)
+      if (index >= presetAngles.length) return
+      updateRotatePresetDialog({ presetAnglesDraft: presetAngles.filter((_, itemIndex) => itemIndex !== index) })
+      return
+    }
+
+    if (action === 'move-rotate-preset-dialog-item') {
+      const dialog = getState().presetDialog
+      if (!dialog || dialog.mode !== 'rotate-presets') return
+      const index = Number(target.dataset.index)
+      const direction = target.dataset.direction === 'down' ? 1 : -1
+      const presetAngles = normalizeRotatePresetAngles(dialog.presetAnglesDraft)
+      if (!Number.isInteger(index) || index < 0 || index >= presetAngles.length) return
+      const nextIndex = index + direction
+      if (nextIndex < 0 || nextIndex >= presetAngles.length) return
+      updateRotatePresetDialog({ presetAnglesDraft: moveArrayItem(presetAngles, index, nextIndex) })
+      return
+    }
+
+    if (action === 'sort-rotate-preset-dialog-items') {
+      const dialog = getState().presetDialog
+      if (!dialog || dialog.mode !== 'rotate-presets') return
+      updateRotatePresetDialog({
+        presetAnglesDraft: [...normalizeRotatePresetAngles(dialog.presetAnglesDraft)].sort((left, right) => left - right),
+      })
+      return
+    }
+
+    if (action === 'reset-rotate-preset-dialog-items') {
+      updateRotatePresetDialog({
+        presetAnglesDraft: [...DEFAULT_ROTATE_PRESET_ANGLES],
+        angleInput: '',
+      })
+      return
+    }
+
+    if (action === 'confirm-rotate-preset-dialog') {
+      const dialog = getState().presetDialog
+      if (!dialog || dialog.mode !== 'rotate-presets') return
+      updateConfig('rotate', { presetAngles: normalizeRotatePresetAngles(dialog.presetAnglesDraft) })
+      closePresetDialog()
+      notify({ type: 'success', message: '已更新常用角度。' })
+      return
+    }
+
     if (await handleManualCropAction(action, target, {
       advanceManualCropAfterSuccess: (asset, latestState, latestConfig) => advanceManualCropAfterSuccessFlow({
         asset,
@@ -3557,6 +3683,14 @@ function attachGlobalEvents() {
       return
     }
 
+    if (action === 'change-rotate-preset-input') {
+      const dialog = getState().presetDialog
+      if (dialog?.mode === 'rotate-presets') {
+        dialog.angleInput = target.value
+      }
+      return
+    }
+
     if (action === 'set-config-range') {
       syncRangeControl(target)
       return
@@ -3571,6 +3705,12 @@ function attachGlobalEvents() {
       const toolId = target.dataset.toolId
       const key = target.dataset.key
       const value = normalizeConfigInputValue(toolId, key, target.value, target.dataset.unitMode)
+
+      if (toolId === 'rotate' && key === 'angle') {
+        updateConfig('rotate', { angle: value })
+        return
+      }
+
       const config = getState().configs[toolId] || {}
       if (config[key] !== value) {
         config[key] = value
@@ -3583,6 +3723,7 @@ function attachGlobalEvents() {
           config.useCustomRatio = useCustomRatio
         }
       }
+
     }
   })
 
@@ -4482,6 +4623,28 @@ function parseValue(value) {
     return Number(value)
   }
   return value
+}
+
+function normalizeRotatePresetAngleValue(value) {
+  if (value === null || value === undefined) return null
+  const raw = String(value).trim()
+  if (!raw) return null
+  const numeric = Number(raw)
+  if (!Number.isFinite(numeric)) return null
+  return Math.max(-360, Math.min(360, Math.round(numeric)))
+}
+
+function normalizeRotatePresetAngles(value) {
+  const source = Array.isArray(value) && value.length ? value : DEFAULT_ROTATE_PRESET_ANGLES
+  const seen = new Set()
+  const next = []
+  for (let index = 0; index < source.length; index += 1) {
+    const numeric = normalizeRotatePresetAngleValue(source[index])
+    if (numeric === null || seen.has(numeric)) continue
+    seen.add(numeric)
+    next.push(numeric)
+  }
+  return next
 }
 
 function normalizeConfigInputValue(toolId, key, value, unitMode = '') {

@@ -16,7 +16,7 @@ const DEFAULT_CONFIGS = {
   corners: { radius: '24px', background: '#ffffff', keepTransparency: false, quality: 90 },
   padding: { top: '20px', right: '20px', bottom: '20px', left: '20px', unifiedMarginEnabled: false, unifiedMargin: '20px', color: '#ffffff', opacity: 100, quality: 90 },
   crop: { mode: 'ratio', ratio: '16:9', useCustomRatio: false, customRatioX: 16, customRatioY: 9, x: '0px', y: '0px', width: 1920, height: 1080, quality: 90 },
-  rotate: { angle: 0, autoCrop: true, keepAspectRatio: false, background: '#ffffff', quality: 90 },
+  rotate: { angle: 0, autoCrop: true, keepAspectRatio: false, background: '#ffffff', quality: 90, presetAngles: [-135, -90, -45, 0, 45, 90, 135, 180] },
   flip: { horizontal: true, vertical: false, preserveMetadata: true, autoCropTransparent: false, outputFormat: 'Keep Original', quality: 90 },
   'merge-pdf': { pageSize: 'A4', margin: 'narrow', background: '#ffffff', autoPaginate: false },
   'merge-image': { direction: 'vertical', pageWidth: 1920, spacing: 24, background: '#ffffff', align: 'start', preventUpscale: false, useMaxAssetSize: false, outputFormat: 'JPEG', quality: 90 },
@@ -249,16 +249,21 @@ export function updateConfig(toolId, patch) {
   const keys = Object.keys(patch)
   if (!keys.length) return
   let nextConfig = null
+  const changedKeys = []
   for (let index = 0; index < keys.length; index += 1) {
     const key = keys[index]
     const value = patch[key]
     if (currentConfig[key] === value) continue
     if (!nextConfig) nextConfig = { ...currentConfig }
     nextConfig[key] = value
+    changedKeys.push(key)
   }
   if (!nextConfig) return
   state.configs[toolId] = nextConfig
-  markPreviewAssetsStale(toolId)
+  const uiOnlyRotatePatch = toolId === 'rotate' && changedKeys.length > 0 && changedKeys.every((key) => key === 'presetAngles')
+  if (!uiOnlyRotatePatch) {
+    markPreviewAssetsStale(toolId)
+  }
   emit()
 }
 

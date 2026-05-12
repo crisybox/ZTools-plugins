@@ -1,9 +1,12 @@
 {
   "name": "imgbatch",
-  "version": "0.1.4",
+  "version": "0.1.6",
   "author": "readerc",
   "license": "MIT",
   "private": true,
+  "scripts": {
+    "build:cli-package": "node scripts/build-cli-package.cjs"
+  },
   "dependencies": {
     "gifenc": "^1.0.3",
     "pdf-lib": "^1.17.1",

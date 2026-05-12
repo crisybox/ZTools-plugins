@@ -2,8 +2,11 @@ const { ipcRenderer, nativeImage, shell } = require('electron')
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
+const Module = require('module')
 const { execFileSync, fork } = require('child_process')
 const { getManualCropDisplaySize: computeManualCropDisplaySize, getManualCropStageMetrics: computeManualCropStageMetrics } = require('./lib/manual-crop-stage.cjs')
+
+initializeRuntimePackagePaths()
 
 const IMAGE_EXTENSIONS = new Set([
   '.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.tiff', '.tif', '.avif', '.ico'
@@ -140,6 +143,20 @@ function toNumber(value, fallback = 0) {
 
 function toInteger(value, fallback = 0) {
   return Math.round(toNumber(value, fallback))
+}
+
+function initializeRuntimePackagePaths() {
+  const runtimePackagesPath = path.join(__dirname, 'runtime-packages')
+  if (!fs.existsSync(runtimePackagesPath)) return
+  const nodePathEntries = String(process.env.NODE_PATH || '')
+    .split(path.delimiter)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+  if (!nodePathEntries.includes(runtimePackagesPath)) {
+    nodePathEntries.unshift(runtimePackagesPath)
+    process.env.NODE_PATH = nodePathEntries.join(path.delimiter)
+    Module._initPaths()
+  }
 }
 
 function resolveMeasureOffset(value, total, fallback = 0) {
@@ -2752,10 +2769,11 @@ async function writeResizeAsset(sharpLib, asset, config, destinationPath) {
     })
   }
 
+  const enforceReferenceSize = config.sizeMode === 'max' || config.sizeMode === 'min'
   const resized = createTransformer(sharpLib, asset).resize({
     width,
     height,
-    fit: config.lockAspectRatio ? 'inside' : 'fill',
+    fit: enforceReferenceSize ? 'fill' : (config.lockAspectRatio ? 'inside' : 'fill'),
   })
   return writeTransformedAsset(resized, format, quality, outputPath)
 }
