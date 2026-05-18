@@ -123,7 +123,7 @@ const LOCAL_KEY = 'code_snippets_templates'
 </script>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, toRaw, onUnmounted, shallowRef, watch } from 'vue'
+import { ref, computed, onMounted, toRaw, onUnmounted, shallowRef, watch, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { CopyDocument, Delete, Edit } from '@element-plus/icons-vue'
 import type { Extension } from '@codemirror/state'
@@ -151,7 +151,10 @@ const onDarkChange = (e: MediaQueryListEvent) => { isDark.value = e.matches }
 onMounted(() => {
   darkMedia.addEventListener('change', onDarkChange)
 })
-onUnmounted(() => darkMedia.removeEventListener('change', onDarkChange))
+onUnmounted(() => {
+  darkMedia.removeEventListener('change', onDarkChange)
+  window.removeEventListener('keydown', handleKeydown)
+})
 
 async function loadExtensions(lang: string): Promise<Extension[]> {
   const { oneDark } = await import('@codemirror/theme-one-dark')
@@ -531,11 +534,57 @@ const handleDeleteAll = () => {
   }).catch(() => {})
 }
 
+const handleKeydown = async (e: KeyboardEvent) => {
+  if (e.repeat) return
+  // Alt+1~5: quick copy first 5 templates (always active)
+  if (e.altKey && !e.ctrlKey && !e.shiftKey) {
+    const num = parseInt(e.key)
+    if (num >= 1 && num <= 5) {
+      e.preventDefault()
+      const tpl = filteredTemplates.value[num - 1]
+      if (tpl) handleCopy(tpl)
+      return
+    }
+
+    // Alt+Insert: quick new template
+    if (e.key === 'Insert') {
+      e.preventDefault()
+      if (viewMode.value === 'edit') {
+        ElMessageBox.confirm('当前正在编辑模板，确定新建？未保存的内容将丢失', '新建确认', {
+          confirmButtonText: '新建',
+          cancelButtonText: '取消',
+          type: 'warning'
+        }).then(() => {
+          handleNewWithClipboard()
+        }).catch(() => {})
+      } else {
+        handleNewWithClipboard()
+      }
+    }
+  }
+}
+
+const handleNewWithClipboard = async () => {
+  let clipboardText = ''
+  try {
+    clipboardText = await navigator.clipboard.readText()
+  } catch { /* clipboard read failed */ }
+  handleNew()
+  if (clipboardText) form.value.code = clipboardText
+}
+
 onMounted(() => {
   loadTemplates()
+  window.addEventListener('keydown', handleKeydown)
   window.ztools?.setSubInput?.(({ text }: { text: string }) => {
     searchKeyword.value = text
-  }, '搜索模板名称、语言、标签...')
+  }, '搜索模板名称、语言、标签...', false)
+  // ZTools 环境下：subInputBlur 让插件应用获得焦点，使快捷键生效
+  if (window.ztools) {
+    nextTick(() => {
+      window.ztools?.subInputBlur?.()
+    })
+  }
 })
 </script>
 
@@ -557,9 +606,10 @@ onMounted(() => {
           clearable
         />
       </div>
+      <div class="shortcut-bar">Alt+1~5 快速复制 | Alt+Insert 快速新增</div>
       <div class="template-list">
         <div
-          v-for="tpl in filteredTemplates"
+          v-for="(tpl, index) in filteredTemplates"
           :key="tpl._id"
           class="template-item"
           :class="{ active: selected?._id === tpl._id }"
@@ -569,6 +619,7 @@ onMounted(() => {
             <div class="template-title">
               <span class="template-name">{{ tpl.name }}</span>
               <span class="template-lang" v-if="tpl.language">- {{ tpl.language }}</span>
+              <span class="shortcut-hint" v-if="index < 5">Alt+{{ index + 1 }}</span>
               <span class="usage-count" v-if="tpl.usageCount">已复制 {{ tpl.usageCount }}</span>
             </div>
             <div class="template-desc" v-if="tpl.description">{{ tpl.description }}</div>
@@ -716,6 +767,13 @@ onMounted(() => {
   border-bottom: 1px solid rgba(128, 128, 128, 0.2);
 }
 
+.shortcut-bar {
+  padding: 4px 12px;
+  font-size: 11px;
+  opacity: 0.45;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.2);
+}
+
 .template-list {
   flex: 1;
   overflow-y: auto;
@@ -771,6 +829,15 @@ onMounted(() => {
   opacity: 0.45;
   white-space: nowrap;
   margin-left: auto;
+}
+
+.shortcut-hint {
+  font-size: 10px;
+  opacity: 0.45;
+  background: rgba(128, 128, 128, 0.15);
+  padding: 1px 4px;
+  border-radius: 3px;
+  white-space: nowrap;
 }
 
 .detail-usage {
