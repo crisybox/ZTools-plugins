@@ -618,12 +618,12 @@ onMounted(() => {
           <div class="template-info">
             <div class="template-title">
               <span class="template-name">{{ tpl.name }}</span>
-              <span class="template-lang" v-if="tpl.language">- {{ tpl.language }}</span>
               <span class="shortcut-hint" v-if="index < 5">Alt+{{ index + 1 }}</span>
-              <span class="usage-count" v-if="tpl.usageCount">已复制 {{ tpl.usageCount }}</span>
             </div>
             <div class="template-desc" v-if="tpl.description">{{ tpl.description }}</div>
-            <div class="template-tags" v-if="tpl.tags.length">
+            <div class="template-tags">
+              <el-tag v-if="tpl.language" size="small" type="info" effect="dark" class="list-tag">{{ tpl.language }}</el-tag>
+              <el-tag v-if="tpl.usageCount" size="small" type="success" effect="plain" class="list-tag usage-tag"><CopyDocument style="width: 10px; height: 10px; margin-right: 2px;" />{{ tpl.usageCount }}</el-tag>
               <el-tag v-for="tag in tpl.tags" :key="tag" size="small" type="primary" effect="plain" class="list-tag">{{ tag }}</el-tag>
             </div>
           </div>
@@ -818,19 +818,6 @@ onMounted(() => {
   text-overflow: ellipsis;
 }
 
-.template-lang {
-  font-size: 12px;
-  opacity: 0.5;
-  white-space: nowrap;
-}
-
-.usage-count {
-  font-size: 11px;
-  opacity: 0.45;
-  white-space: nowrap;
-  margin-left: auto;
-}
-
 .shortcut-hint {
   font-size: 10px;
   opacity: 0.45;
@@ -838,12 +825,6 @@ onMounted(() => {
   padding: 1px 4px;
   border-radius: 3px;
   white-space: nowrap;
-}
-
-.detail-usage {
-  font-size: 12px;
-  opacity: 0.5;
-  margin-left: 8px;
 }
 
 .template-desc {
@@ -866,6 +847,17 @@ onMounted(() => {
   --el-tag-font-size: 10px;
   height: 16px;
   padding: 0 4px;
+}
+
+.usage-tag {
+  display: inline-flex;
+  align-items: center;
+}
+
+.detail-usage {
+  font-size: 12px;
+  opacity: 0.5;
+  margin-left: 8px;
 }
 
 .tag-input-wrapper {
