@@ -502,6 +502,119 @@ function ensureExecutable(file) {
   }
 }
 
+function commandMatchesExecutable(command, file) {
+  const value = String(command || "").trim();
+  if (!value.startsWith(file)) return false;
+  const next = value.slice(file.length, file.length + 1);
+  return next === "" || /\s/.test(next);
+}
+
+function normalizeWinPath(file) {
+  return path.resolve(String(file || "")).toLowerCase();
+}
+
+function findDarwinClientPids(file) {
+  const output = execFileSync("/bin/ps", ["-axo", "pid=,command="], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  const pids = [];
+  for (const line of output.split(/\r?\n/)) {
+    const match = line.match(/^\s*(\d+)\s+(.+)$/);
+    if (!match) continue;
+    const pid = Number(match[1]);
+    if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) continue;
+    if (child?.pid && pid === child.pid) continue;
+    if (commandMatchesExecutable(match[2], file)) {
+      pids.push(pid);
+    }
+  }
+  return pids;
+}
+
+function findWin32ClientPids(file) {
+  const command = [
+    "$items = Get-CimInstance Win32_Process -Filter \"Name='zosenlink-node-client.exe'\"",
+    "| Select-Object ProcessId,ExecutablePath",
+    "| ConvertTo-Json -Compress"
+  ].join(" ");
+  const output = execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"]
+  }).trim();
+  if (!output) return [];
+  const parsed = JSON.parse(output);
+  const rows = Array.isArray(parsed) ? parsed : [parsed];
+  const target = normalizeWinPath(file);
+  return rows
+    .filter((row) => row && normalizeWinPath(row.ExecutablePath) === target)
+    .map((row) => Number(row.ProcessId))
+    .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid && pid !== child?.pid);
+}
+
+function findExistingClientPids(file) {
+  try {
+    if (process.platform === "darwin") return findDarwinClientPids(file);
+    if (process.platform === "win32") return findWin32ClientPids(file);
+  } catch (error) {
+    pushEvent({ source: "plugin", type: "cleanup_warning", message: `检查旧客户端进程失败：${normalizeError(error)}` });
+  }
+  return [];
+}
+
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function killPid(pid, signal) {
+  try {
+    process.kill(pid, signal);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function waitForExit(pid, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isProcessAlive(pid)) return true;
+    sleepSync(80);
+  }
+  return !isProcessAlive(pid);
+}
+
+function cleanupExistingClientProcesses(file) {
+  if (child && !child.killed) {
+    const trackedPid = child.pid;
+    terminateChild("启动前停止旧客户端进程", true);
+    if (trackedPid) {
+      waitForExit(trackedPid, 1200);
+    }
+  }
+
+  const pids = findExistingClientPids(file);
+  if (!pids.length) return;
+  pushEvent({ source: "plugin", type: "cleanup", message: `启动前清理旧客户端进程：${pids.join(", ")}` });
+  for (const pid of pids) {
+    killPid(pid, "SIGTERM");
+  }
+  for (const pid of pids) {
+    if (!waitForExit(pid, 1200)) {
+      killPid(pid, "SIGKILL");
+    }
+  }
+}
+
 function terminateChild(reason, detach) {
   const target = child;
   if (!target) {
@@ -527,14 +640,11 @@ function terminateChild(reason, detach) {
 
 async function start(key) {
   const activationKey = assertActivationKey(key);
-  if (child && !child.killed) {
-    return getStatus();
-  }
-
   let file = "";
   try {
     const runtime = await ensureClientRuntime();
     file = runtime.executable;
+    cleanupExistingClientProcesses(file);
   } catch (error) {
     state.status = "error";
     state.statusText = "错误";
