@@ -120,7 +120,7 @@ function getServices(): Services {
 }
 
 function syncSubInput(value: string) {
-  window.ztools.setSubInputValue(value)
+  window.ztools?.setSubInputValue(value)
 }
 
 function resolveInitialKeyword(action: LaunchAction) {
@@ -165,7 +165,7 @@ async function handleKillProcess(entry: PortUsage) {
   try {
     const result = await Promise.resolve(getServices().killProcess(entry.pid))
     const processName = result.processName || entry.processName
-    window.ztools.showNotification(`已结束进程 ${processName} (${entry.pid})`)
+    window.ztools?.showNotification(`已结束进程 ${processName} (${entry.pid})`)
     ElMessage.success(`已结束进程 ${processName} (${entry.pid})`)
     await loadPortUsage()
   } catch (error) {
@@ -178,7 +178,7 @@ async function handleKillProcess(entry: PortUsage) {
 }
 
 function setupSubInput(initialKeyword = '') {
-  window.ztools.setSubInput(
+  window.ztools?.setSubInput(
     (input: { text: string }) => {
       keyword.value = input.text.trim()
     },
@@ -197,17 +197,23 @@ function handlePluginEnter(action: LaunchAction) {
 
 function handlePluginOut() {
   keyword.value = ''
-  void window.ztools.removeSubInput()
+  void window.ztools?.removeSubInput()
 }
 
 onMounted(() => {
-  window.ztools.setExpendHeight(720)
-  window.ztools.onPluginEnter(handlePluginEnter)
-  window.ztools.onPluginOut(handlePluginOut)
+  const ztools = window.ztools
+
+  if (!ztools) {
+    return
+  }
+
+  ztools.setExpendHeight(720)
+  ztools.onPluginEnter(handlePluginEnter)
+  ztools.onPluginOut(handlePluginOut)
 })
 
 onBeforeUnmount(() => {
-  void window.ztools.removeSubInput()
+  void window.ztools?.removeSubInput()
 })
 </script>
 
