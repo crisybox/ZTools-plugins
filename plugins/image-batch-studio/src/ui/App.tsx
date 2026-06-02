@@ -198,15 +198,21 @@ export function App() {
     window.ztools?.dbStorage?.setItem?.("image-batch-settings", settings);
   }, [settings]);
 
+  useEffect(() => {
+    if (!selectedPath && imageFiles.length > 0) {
+      setSelectedPath(imageFiles[0].path);
+      return;
+    }
+    if (selectedPath && !imageFiles.some((file) => file.path === selectedPath)) {
+      setSelectedPath(imageFiles[0]?.path ?? "");
+    }
+  }, [imageFiles, selectedPath]);
+
   function addFiles(nextFiles: SourceFile[]) {
     setFiles((current) => {
       const byPath = new Map(current.map((file) => [file.path, file]));
       for (const file of nextFiles) byPath.set(file.path, file);
-      const merged = Array.from(byPath.values());
-      if (!selectedPath && merged.some((file) => file.type === "image")) {
-        setSelectedPath(merged.find((file) => file.type === "image")!.path);
-      }
-      return merged;
+      return Array.from(byPath.values());
     });
   }
 
@@ -925,6 +931,12 @@ function ManualCropEditor({
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
   const [natural, setNatural] = useState({ width: file.width ?? 1, height: file.height ?? 1 });
   const [stageGeometry, setStageGeometry] = useState<{ stageRect: Rect; imageRect: Rect } | null>(null);
+
+  useEffect(() => {
+    setNatural({ width: file.width ?? 1, height: file.height ?? 1 });
+    setStageGeometry(null);
+    setDragStart(null);
+  }, [file.path, file.width, file.height]);
 
   useEffect(() => {
     const stage = stageRef.current;

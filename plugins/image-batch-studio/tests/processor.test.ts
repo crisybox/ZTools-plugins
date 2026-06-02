@@ -143,6 +143,24 @@ describe("offline processing engine", () => {
     expect(metadata.height).toBe(40);
   });
 
+  it("ignores resize settings when both dimensions are empty", async () => {
+    const dir = await makeTempDir();
+    const input = path.join(dir, "no-resize.png");
+    const outputDir = path.join(dir, "out");
+    await makeImage(input, 48, 36, "#446a9d");
+
+    const [result] = await processImages([input], {
+      output: { directory: outputDir, namingPattern: "{name}-same.{ext}", overwrite: false },
+      format: { type: "png" },
+      resize: { mode: "fit", withoutEnlargement: true }
+    });
+
+    expect(result.ok).toBe(true);
+    const metadata = await sharp(result.outputPath).metadata();
+    expect(metadata.width).toBe(48);
+    expect(metadata.height).toBe(36);
+  });
+
   it("merges PDFs in input order", async () => {
     const dir = await makeTempDir();
     const first = path.join(dir, "a.pdf");

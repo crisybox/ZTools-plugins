@@ -88,6 +88,7 @@ function outputFormat(settings: ImageJobSettings, inputPath: string): ImageForma
 function applyResize(image: Sharp, settings: ImageJobSettings, width?: number, height?: number): Sharp {
   const resize = settings.resize;
   if (!resize) return image;
+  if (!resize.width && !resize.height) return image;
 
   const withoutEnlargement = resize.withoutEnlargement ?? true;
   if (resize.mode === "exact") {
@@ -153,10 +154,9 @@ function applyOutputFormat(image: Sharp, format: ImageFormat, settings: ImageJob
 }
 
 async function applyRounded(image: Sharp, radius: number, background?: string): Promise<Sharp> {
-  const inputBuffer = await image.png().toBuffer();
-  const metadata = await sharp(inputBuffer).metadata();
-  const width = metadata.width ?? 1;
-  const height = metadata.height ?? 1;
+  const { data: inputBuffer, info: metadata } = await image.png().toBuffer({ resolveWithObject: true });
+  const width = metadata.width;
+  const height = metadata.height;
   const safeRadius = clampInteger(radius, 0, Math.min(width, height) / 2);
   const mask = Buffer.from(
     `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect x="0" y="0" width="${width}" height="${height}" rx="${safeRadius}" ry="${safeRadius}" fill="#fff"/></svg>`
@@ -427,7 +427,7 @@ export async function mergeImages(
       limitInputPixels: maxMergeSourcePixels
     })
       .rotate()
-      .png()
+      .png({ compressionLevel: 0 })
       .toBuffer({ resolveWithObject: true });
     preparedBytes += image.data.byteLength;
     if (preparedBytes > maxMergePreparedBytes) {
