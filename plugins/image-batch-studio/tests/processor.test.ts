@@ -49,6 +49,16 @@ async function makeTwoColorImage(filePath: string) {
     .toFile(filePath);
 }
 
+async function makeTinyOptimizedPng(filePath: string) {
+  await fs.writeFile(
+    filePath,
+    Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
+      "base64"
+    )
+  );
+}
+
 async function makeHeif(filePath: string, width: number, height: number, color: string) {
   await sharp({
     create: {
@@ -255,6 +265,25 @@ describe("offline processing engine", () => {
     const metadata = await sharp(result.outputPath).metadata();
     expect(metadata.format).toBe("heif");
     expect(metadata.compression).toBe("av1");
+  });
+
+  it("keeps optimized PNG compression output from growing", async () => {
+    const dir = await makeTempDir();
+    const input = path.join(dir, "tiny.png");
+    const outputDir = path.join(dir, "out");
+    await makeTinyOptimizedPng(input);
+
+    const [result] = await processImages([input], {
+      output: { directory: outputDir, namingPattern: "{name}-compressed.{ext}", overwrite: false },
+      compression: { quality: 60, keepMetadata: false }
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.outputBytes).toBeLessThanOrEqual(result.inputBytes ?? 0);
+    const metadata = await sharp(result.outputPath).metadata();
+    expect(metadata.format).toBe("png");
+    expect(metadata.width).toBe(1);
+    expect(metadata.height).toBe(1);
   });
 
   it("adds HEIC image watermarks to HEIF inputs without changing canvas size", async () => {

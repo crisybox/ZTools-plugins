@@ -116,6 +116,30 @@ function outputFormat(settings: ImageJobSettings, inputPath: string): ImageForma
   return settings.format?.type ?? formatFromPath(inputPath);
 }
 
+function shouldKeepOriginalPngCompression(
+  settings: ImageJobSettings,
+  inputPath: string,
+  format: ImageFormat,
+  inputBytes: number,
+  outputBytes: number
+): boolean {
+  return Boolean(
+    settings.compression &&
+      !settings.format &&
+      !settings.resize &&
+      !settings.crop &&
+      !settings.cropRelative &&
+      settings.rotate === undefined &&
+      !settings.flip &&
+      !settings.border?.enabled &&
+      !settings.rounded?.enabled &&
+      !settings.watermark?.enabled &&
+      format === "png" &&
+      formatFromPath(inputPath) === "png" &&
+      outputBytes >= inputBytes
+  );
+}
+
 function applyResize(image: Sharp, settings: ImageJobSettings, width?: number, height?: number): Sharp {
   const resize = settings.resize;
   if (!resize) return image;
@@ -396,7 +420,17 @@ async function processOne(
 
     const format = outputFormat(settings, inputPath);
     image = applyOutputFormat(image, format, settings);
-    const { data: outputBuffer, info: outMetadata } = await image.toBuffer({ resolveWithObject: true });
+    const inputStat = await fs.stat(inputPath);
+    const { data: encodedBuffer, info: outMetadata } = await image.toBuffer({ resolveWithObject: true });
+    const outputBuffer = shouldKeepOriginalPngCompression(
+      settings,
+      inputPath,
+      format,
+      inputStat.size,
+      encodedBuffer.byteLength
+    )
+      ? await fs.readFile(inputPath)
+      : encodedBuffer;
     const outputPath = buildOutputPath({
       inputPath,
       outputDirectory: settings.output.directory,
@@ -410,7 +444,7 @@ async function processOne(
     });
 
     await writeOutputFile(outputPath, outputBuffer, settings.output.overwrite);
-    const [inputStat, outputStat] = await Promise.all([fs.stat(inputPath), fs.stat(outputPath)]);
+    const outputStat = await fs.stat(outputPath);
     return {
       inputPath,
       outputPath,
