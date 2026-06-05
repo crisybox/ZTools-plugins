@@ -1,6 +1,6 @@
 {
   "name": "ztools-deepread",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "DeepRead (深读) - a discreet local novel reader for ZTools.",
   "type": "module",
   "scripts": {

@@ -699,8 +699,10 @@
         setCssVar("--fish-font-size", `${fontSize}px`)
         setCssVar("--fish-line-height", String(lineHeight))
         setCssVar("--fish-row-height", `${fontSize * lineHeight}px`)
+        const opacity = Number(settings.opacity)
+
         setCssVar("--fish-letter-spacing", `${settings.letterSpacing || 0}px`)
-        setCssVar("--fish-opacity", String((settings.opacity || 82) / 100))
+        setCssVar("--fish-opacity", String((Number.isFinite(opacity) ? opacity : 82) / 100))
         setFishBackgrounds(settings.fishBackgrounds)
         setFishBox(settings.fishWidth || 700, settings.fishHeight || 100)
         setFishPosition(payload?.bounds)

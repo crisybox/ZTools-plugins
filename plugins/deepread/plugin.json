@@ -4,7 +4,7 @@
   "title": "DeepRead 深读",
   "description": "一个面向 ZTools 的低调本地小说阅读插件，支持书架、分页、进度保存、章节/搜索跳转和快速隐藏。",
   "author": "DeepRead",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "main": "dist/index.html",
   "preload": "dist/preload/services.js",
   "logo": "dist/logo.png",

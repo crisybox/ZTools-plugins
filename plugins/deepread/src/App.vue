@@ -170,7 +170,7 @@ const storage = {
   get<T>(key: string, fallback: T): T {
     try {
       const zStorage = window.ztools?.dbStorage
-      const stored = zStorage?.getItem?.<unknown>(key)
+      const stored = zStorage?.getItem?.(key)
       if (stored !== undefined && stored !== null && stored !== '') {
         if (typeof stored !== 'string') return stored as T
 
@@ -262,14 +262,37 @@ function getVisualPage(content: string, startIndex: number, lineLength: number, 
 }
 
 function buildPageStarts(content: string, lineLength: number, lineCount: number) {
+  const safeLineLength = Math.max(1, Math.round(lineLength))
+  const safeLineCount = Math.max(1, Math.round(lineCount))
   const starts = [0]
   let cursor = 0
 
   while (cursor < content.length) {
-    const nextCursor = getVisualPage(content, cursor, lineLength, lineCount).endIndex
-    if (nextCursor <= cursor) break
+    const startCursor = cursor
+    let lines = 0
 
-    cursor = nextCursor
+    // This path runs for the whole book during re-pagination, so keep it allocation-free.
+    while (cursor < content.length && lines < safeLineCount) {
+      let columns = 0
+
+      while (cursor < content.length && columns < safeLineLength) {
+        if (content[cursor] === '\n') {
+          cursor += 1
+          break
+        }
+
+        cursor += 1
+        columns += 1
+      }
+
+      if (columns >= safeLineLength && content[cursor] === '\n') {
+        cursor += 1
+      }
+
+      lines += 1
+    }
+
+    if (cursor <= startCursor) break
     if (cursor < content.length) starts.push(cursor)
   }
 
@@ -661,7 +684,7 @@ function normalizeSettings(input: unknown): ReaderSettings {
     fishX: Number.isFinite(storedFishX) ? storedFishX : defaultSettings.fishX,
     fishY: Number.isFinite(storedFishY) ? storedFishY : defaultSettings.fishY,
     letterSpacing: clampFloat(stored.letterSpacing, 0, 3, defaultSettings.letterSpacing, 1),
-    opacity: clampNumber(toFiniteNumber(stored.opacity, defaultSettings.opacity), 35, 100),
+    opacity: clampNumber(toFiniteNumber(stored.opacity, defaultSettings.opacity), 0, 100),
     autoSeconds: clampNumber(toFiniteNumber(stored.autoSeconds, defaultSettings.autoSeconds), 3, 60),
     prevPageKey,
     nextPageKey,
@@ -1409,7 +1432,7 @@ function handleFishCommand(command: FishCommand) {
 }
 
 watch(
-  () => ({ ...settings }),
+  settings,
   () => persistSettings(),
   { deep: true }
 )
@@ -1464,8 +1487,11 @@ watch(
   ],
   () => {
     nextTick(() => {
-      if (activeBook.value) ensureFishWindow()
-      pushFishState()
+      if (activeBook.value) {
+        ensureFishWindow()
+      } else {
+        pushFishState()
+      }
     })
   },
   { immediate: true }
@@ -1729,7 +1755,7 @@ onBeforeUnmount(() => {
               </label>
               <label class="range-row">
                 <span>透明度</span>
-                <input v-model.number="settings.opacity" type="range" min="35" max="100" />
+                <input v-model.number="settings.opacity" type="range" min="0" max="100" />
                 <output>{{ settings.opacity }}%</output>
               </label>
               <label class="switch-row">
