@@ -6,5 +6,8 @@ function decideSelectActions(r) {
     if (r.ok) {
         return [{ kind: 'close-host' }];
     }
+    if ('ipcError' in r) {
+        return [{ kind: 'notify', message: '启动 VSCode 失败（IPC 异常）：' + r.ipcError }];
+    }
     return [{ kind: 'notify', message: '无法启动 VSCode：' + r.reason + PATH_HINT }];
 }

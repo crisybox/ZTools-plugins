@@ -28,4 +28,17 @@ describe('decideSelectActions', () => {
     const actions = decideSelectActions({ ok: false, reason: '' });
     expect(actions[0].kind).toBe('notify');
   });
+
+  it('on IPC error: notifies with ipc-error prefix, does NOT close host', () => {
+    const actions = decideSelectActions({ ok: false, ipcError: 'channel closed' });
+    expect(actions.length).toBe(1);
+    expect(actions[0].kind).toBe('notify');
+    if (actions[0].kind === 'notify') {
+      expect(actions[0].message).toContain('IPC 异常');
+      expect(actions[0].message).toContain('channel closed');
+      // No PATH hint for IPC errors — root cause is the channel, not the user's PATH.
+      expect(actions[0].message).not.toContain('Install code command');
+    }
+    expect(actions.find((a) => a.kind === 'close-host')).toBeUndefined();
+  });
 });
