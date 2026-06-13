@@ -134,44 +134,30 @@ const selectApp = async (app: AppConfig) => {
   currentApp.value = app
   iframeLoading.value = true
   iframeSrc.value = '' // 先清空，避免显示旧内容
-  if (app.basicAuth?.username && window.services?.setupAppProxy) {
+
+  // 检查是否需要代理：有 Basic Auth 或已有 cookies
+  const hasBasicAuth = app.basicAuth?.username
+  const hasCookies = window.services?.getCookies?.(app.id)
+  const needProxy = hasBasicAuth || hasCookies
+
+  if (needProxy && window.services?.setupAppProxy) {
     try {
       // 密码在存储中是 base64 编码的，使用时解码
-      const password = decodePassword(app.basicAuth.password)
-      await window.services.setupAppProxy(app.id, app.url, app.basicAuth.username, password)
-      const rawUrl = window.services.getProxyUrl(app.id)
-      const url = extractUrl(rawUrl, app.url)
-      if (isValidUrl(url)) {
-        iframeSrc.value = url
-      } else {
-        iframeSrc.value = app.url
-      }
+      const password = hasBasicAuth ? decodePassword(app.basicAuth!.password) : ''
+      const proxyUrl = await window.services.setupAppProxy(
+        app.id,
+        app.url,
+        hasBasicAuth ? app.basicAuth!.username : '',
+        password
+      )
+      // 代理 URL 格式: http://127.0.0.1:{port}
+      iframeSrc.value = proxyUrl || app.url
     } catch (e) {
       console.error('[WebApp] 代理启动失败:', e)
       iframeSrc.value = app.url // 降级直接加载
     }
   } else {
     iframeSrc.value = app.url
-  }
-}
-
-// 从可能的对象中安全提取 URL 字符串
-const extractUrl = (value: any, fallback: string): string => {
-  if (typeof value === 'string') return value
-  if (value && typeof value === 'object') {
-    // 尝试常见的 URL 属性名
-    return value.url || value.href || value.proxyUrl || value.proxy_url || String(value)
-  }
-  return fallback
-}
-
-// 验证 URL 格式
-const isValidUrl = (url: string): boolean => {
-  try {
-    new URL(url)
-    return true
-  } catch {
-    return false
   }
 }
 

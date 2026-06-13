@@ -5,79 +5,224 @@ const https = require('node:https')
 const zlib = require('node:zlib')
 const { URL } = require('node:url')
 
+// ============================================
+// Cookie 持久化存储
+// ============================================
+const cookiesMap = new Map() // appId -> { [domain]: [cookie1, cookie2, ...] }
+let cookieDirty = false // 标记是否有未保存的修改
+let cookieSaveTimer = null // 延迟保存定时器
+
+function getCookiePath() {
+  let userDataPath
+  try {
+    userDataPath = window.ztools?.getPath('userData')
+  } catch (e) {
+    // ignore
+  }
+  if (!userDataPath) {
+    userDataPath = process.env.USERPROFILE || process.env.HOME || '/tmp'
+  }
+  return path.join(userDataPath, 'webapp-cookies.json')
+}
+
+function loadCookies() {
+  try {
+    const cookiePath = getCookiePath()
+    if (fs.existsSync(cookiePath)) {
+      const data = fs.readFileSync(cookiePath, { encoding: 'utf-8' })
+      const obj = JSON.parse(data)
+      for (const [key, value] of Object.entries(obj)) {
+        cookiesMap.set(key, value)
+      }
+    }
+  } catch (e) {
+    console.error('[Cookie] 加载失败:', e)
+  }
+}
+
+function saveCookies(immediate = false) {
+  cookieDirty = true
+
+  // 清除之前的定时器
+  if (cookieSaveTimer) {
+    clearTimeout(cookieSaveTimer)
+    cookieSaveTimer = null
+  }
+
+  const doSave = () => {
+    if (!cookieDirty) return
+    try {
+      const cookiePath = getCookiePath()
+      const dir = path.dirname(cookiePath)
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true })
+      }
+      const obj = Object.fromEntries(cookiesMap)
+      fs.writeFileSync(cookiePath, JSON.stringify(obj, null, 2), { encoding: 'utf-8' })
+      cookieDirty = false
+    } catch (e) {
+      console.error('[Cookie] 保存失败:', e)
+    }
+  }
+
+  if (immediate) {
+    doSave()
+  } else {
+    // 延迟 500ms 保存，避免频繁写入
+    cookieSaveTimer = setTimeout(doSave, 500)
+  }
+}
+
+// 解析 Set-Cookie 头，提取 cookie 名称和值
+function parseSetCookie(setCookieHeader) {
+  const parts = setCookieHeader.split(';')
+  const [nameValue] = parts
+  const eqIndex = nameValue.indexOf('=')
+  if (eqIndex === -1) return null
+  const name = nameValue.substring(0, eqIndex).trim()
+  const value = nameValue.substring(eqIndex + 1).trim()
+  return { name, value, full: setCookieHeader }
+}
+
+// 从 cookie 数组构建 Cookie 头
+function buildCookieHeader(cookies) {
+  if (!cookies || cookies.length === 0) return null
+  return cookies.map(c => `${c.name}=${c.value}`).join('; ')
+}
+
+// 更新 appId 的 cookies
+function updateCookies(appId, domain, setCookieHeaders) {
+  if (!setCookieHeaders || setCookieHeaders.length === 0) return
+
+  if (!cookiesMap.has(appId)) {
+    cookiesMap.set(appId, {})
+  }
+  const appCookies = cookiesMap.get(appId)
+
+  if (!appCookies[domain]) {
+    appCookies[domain] = []
+  }
+
+  for (const header of setCookieHeaders) {
+    const cookie = parseSetCookie(header)
+    if (!cookie) continue
+
+    // 检查是否已存在同名 cookie，存在则更新
+    const existingIndex = appCookies[domain].findIndex(c => c.name === cookie.name)
+    if (existingIndex !== -1) {
+      appCookies[domain][existingIndex] = cookie
+    } else {
+      appCookies[domain].push(cookie)
+    }
+  }
+
+  // 延迟保存
+  saveCookies()
+}
+
+// 获取 appId 的 cookies
+function getCookies(appId) {
+  return cookiesMap.get(appId) || {}
+}
+
 // 解压响应体（支持 gzip / deflate / br）
-function decompressResponse(stream, encoding) {
-  if (!encoding) return Promise.resolve(stream)
+async function decompressResponse(stream, encoding) {
+  const collectStream = (s) => {
+    return new Promise((resolve, reject) => {
+      const chunks = []
+      s.on('data', c => chunks.push(c))
+      s.on('end', () => resolve(Buffer.concat(chunks)))
+      s.on('error', reject)
+    })
+  }
+
+  if (!encoding) {
+    return collectStream(stream)
+  }
+
   const enc = encoding.toLowerCase().trim()
   if (enc === 'gzip' || enc === 'x-gzip') {
-    return new Promise((resolve, reject) => {
-      const chunks = []
-      stream.pipe(zlib.createGunzip()).on('data', c => chunks.push(c))
-        .on('end', () => resolve(Buffer.concat(chunks)))
-        .on('error', reject)
-    })
+    return collectStream(stream.pipe(zlib.createGunzip()))
   }
   if (enc === 'deflate') {
-    return new Promise((resolve, reject) => {
-      const chunks = []
-      stream.pipe(zlib.createInflate()).on('data', c => chunks.push(c))
-        .on('end', () => resolve(Buffer.concat(chunks)))
-        .on('error', reject)
-    })
+    return collectStream(stream.pipe(zlib.createInflate()))
   }
   if (enc === 'br') {
-    return new Promise((resolve, reject) => {
-      const chunks = []
-      stream.pipe(zlib.createBrotliDecompress()).on('data', c => chunks.push(c))
-        .on('end', () => resolve(Buffer.concat(chunks)))
-        .on('error', reject)
-    })
+    return collectStream(stream.pipe(zlib.createBrotliDecompress()))
   }
+
   // 未知编码，原样返回
-  return new Promise((resolve, reject) => {
-    const chunks = []
-    stream.on('data', c => chunks.push(c))
-    stream.on('end', () => resolve(Buffer.concat(chunks)))
-    stream.on('error', reject)
-  })
+  return collectStream(stream)
 }
 
 // ============================================
-// 本地 HTTP 反向代理（Basic Auth 场景）
+// 独立端口反向代理（每个应用一个端口）
 // ============================================
-let proxyServer = null
-let proxyPort = null
-let proxyReady = null // Promise<void>，用于等待代理启动完成
-const appAuthMap = new Map()
+const BASE_PORT = 18080 // 代理端口起始值
+const appProxies = new Map() // appId -> { server, port, targetUrl, username, password }
 
-function startProxyServer() {
-  if (proxyReady) return proxyReady
+// 启动时加载 cookies
+loadCookies()
 
-  proxyReady = new Promise((resolve, reject) => {
-    proxyServer = http.createServer(async (req, res) => {
+/**
+ * 查找可用端口（迭代方式，避免栈溢出）
+ */
+function findAvailablePort(startPort, maxRetries = 100) {
+  return new Promise((resolve, reject) => {
+    let currentPort = startPort
+    let retries = 0
+
+    const tryPort = () => {
+      if (retries >= maxRetries) {
+        reject(new Error(`无法找到可用端口（已尝试 ${maxRetries} 个端口）`))
+        return
+      }
+
+      const server = http.createServer()
+      server.listen(currentPort, '127.0.0.1', () => {
+        const port = server.address().port
+        server.close(() => resolve(port))
+      })
+      server.on('error', (err) => {
+        if (err.code === 'EADDRINUSE') {
+          retries++
+          currentPort++
+          tryPort()
+        } else {
+          reject(err)
+        }
+      })
+    }
+
+    tryPort()
+  })
+}
+
+/**
+ * 创建应用代理服务器
+ */
+async function createAppProxy(appId, targetUrl, username, password) {
+  // 如果已存在，先关闭旧的
+  if (appProxies.has(appId)) {
+    removeAppProxy(appId)
+  }
+
+  const port = await findAvailablePort(BASE_PORT)
+  const targetObj = new URL(targetUrl)
+  const targetDomain = targetObj.hostname
+
+  return new Promise((resolve, reject) => {
+    const server = http.createServer(async (req, res) => {
       try {
         const reqUrl = new URL(req.url, 'http://127.0.0.1')
-        const pathParts = reqUrl.pathname.split('/').filter(Boolean)
-        const appId = pathParts.shift() // 取出 appId，剩余部分为目标路径
-        const targetPath = '/' + pathParts.join('/')
+        const fullUrl = targetObj.origin + reqUrl.pathname + reqUrl.search
 
-        if (!appId || !appAuthMap.has(appId)) {
-          res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' })
-          res.end('App not found')
-          return
-        }
-
-        const { targetUrl, username, password } = appAuthMap.get(appId)
-        const base = targetUrl.replace(/\/+$/, '')
-        const fullUrl = base + targetPath + reqUrl.search
-
-        const targetObj = new URL(fullUrl)
         const client = targetObj.protocol === 'https:' ? https : http
 
         // 构造转发请求头
         const fwdHeaders = {}
         // 转发部分原始请求头（不转发 accept-encoding，确保服务器返回未压缩内容）
-        const passHeaders = ['accept', 'accept-language', 'content-type', 'cookie']
+        const passHeaders = ['accept', 'accept-language', 'content-type']
         for (const h of passHeaders) {
           if (req.headers[h]) fwdHeaders[h] = req.headers[h]
         }
@@ -86,8 +231,16 @@ function startProxyServer() {
           fwdHeaders['authorization'] = 'Basic ' + Buffer.from(username + ':' + password).toString('base64')
         }
 
+        // 添加保存的 cookies
+        const appCookies = getCookies(appId)
+        const domainCookies = appCookies[targetDomain] || []
+        const clientCookieHeader = buildCookieHeader(domainCookies)
+        if (clientCookieHeader) {
+          fwdHeaders['cookie'] = clientCookieHeader
+        }
+
         const proxyRes = await new Promise((resolveRes, rejectRes) => {
-          const proxyReq = client.request(targetObj, {
+          const proxyReq = client.request(fullUrl, {
             method: req.method,
             headers: fwdHeaders,
             timeout: 30000
@@ -101,10 +254,16 @@ function startProxyServer() {
           }
         })
 
+        // 保存 cookies
+        const setCookieHeaders = proxyRes.headers['set-cookie']
+        if (setCookieHeaders) {
+          updateCookies(appId, targetDomain, setCookieHeaders)
+        }
+
         // 读取并解压响应体
         const body = await decompressResponse(proxyRes, proxyRes.headers['content-encoding'])
 
-        // 构造响应头
+        // 构造响应头 - 透传所有响应头，只移除必要的
         const resHeaders = {}
         const skipHeaders = new Set(['transfer-encoding', 'content-encoding', 'content-security-policy', 'x-frame-options'])
         for (const [k, v] of Object.entries(proxyRes.headers)) {
@@ -112,31 +271,10 @@ function startProxyServer() {
         }
         resHeaders['access-control-allow-origin'] = '*'
 
-        const ct = (proxyRes.headers['content-type'] || '').toLowerCase()
-
-        // 对 HTML 响应做 URL 重写：将目标域的绝对 URL 替换为代理 URL
-        if (ct.includes('text/html')) {
-          let html = body.toString('utf-8')
-          const origin = targetObj.origin // e.g. https://target.com
-          const proxyBase = 'http://127.0.0.1:' + proxyPort + '/' + appId
-          // 替换目标源的绝对 URL（href="https://target.com/...", src="https://target.com/..."）
-          while (html.includes(origin)) {
-            html = html.replace(origin, proxyBase)
-          }
-          // 替换协议相对 URL（//target.com/...）
-          const protoRelative = '//' + targetObj.host
-          while (html.includes(protoRelative)) {
-            html = html.replace(protoRelative, proxyBase)
-          }
-          const newBody = Buffer.from(html, 'utf-8')
-          resHeaders['content-length'] = newBody.length
-          res.writeHead(proxyRes.statusCode, resHeaders)
-          res.end(newBody)
-        } else {
-          resHeaders['content-length'] = body.length
-          res.writeHead(proxyRes.statusCode, resHeaders)
-          res.end(body)
-        }
+        // 直接透传，不做 URL 重写
+        resHeaders['content-length'] = body.length
+        res.writeHead(proxyRes.statusCode, resHeaders)
+        res.end(body)
       } catch (err) {
         console.error('[Proxy Error]', err.message)
         if (!res.headersSent) {
@@ -146,40 +284,38 @@ function startProxyServer() {
       }
     })
 
-    proxyServer.listen(0, '127.0.0.1', () => {
-      proxyPort = proxyServer.address().port
-      console.log('[Proxy] started on port ' + proxyPort)
-      resolve()
+    server.listen(port, '127.0.0.1', () => {
+      console.log(`[Proxy] App ${appId} started on port ${port}`)
+      appProxies.set(appId, { server, port, targetUrl, username, password })
+      resolve(port)
     })
 
-    proxyServer.on('error', (err) => {
-      console.error('[Proxy] server error:', err)
+    server.on('error', (err) => {
+      console.error(`[Proxy] Server error for ${appId}:`, err)
       reject(err)
     })
   })
-
-  return proxyReady
 }
 
 /**
- * 注册应用认证信息，返回代理 URL
- */
-async function setupAppProxy(appId, targetUrl, username, password) {
-  appAuthMap.set(appId, { targetUrl, username, password })
-  await startProxyServer()
-  return 'http://127.0.0.1:' + proxyPort + '/' + appId + '/'
-}
-
-/**
- * 获取已注册的代理 URL（不等待启动）
+ * 获取已注册的代理 URL
  */
 function getProxyUrl(appId) {
-  if (!proxyPort) return null
-  return 'http://127.0.0.1:' + proxyPort + '/' + appId + '/'
+  const proxy = appProxies.get(appId)
+  if (!proxy) return null
+  return `http://127.0.0.1:${proxy.port}`
 }
 
+/**
+ * 移除应用代理
+ */
 function removeAppProxy(appId) {
-  appAuthMap.delete(appId)
+  const proxy = appProxies.get(appId)
+  if (proxy) {
+    proxy.server.close()
+    appProxies.delete(appId)
+    console.log(`[Proxy] App ${appId} stopped`)
+  }
 }
 
 // ============================================
@@ -187,7 +323,15 @@ function removeAppProxy(appId) {
 // ============================================
 window.services = {
   getConfigPath() {
-    const userDataPath = window.ztools.getPath('userData') || path.join(process.env.USERPROFILE, '.ztools')
+    let userDataPath
+    try {
+      userDataPath = window.ztools?.getPath('userData')
+    } catch (e) {
+      // ignore
+    }
+    if (!userDataPath) {
+      userDataPath = process.env.USERPROFILE || process.env.HOME || '/tmp'
+    }
     return path.join(userDataPath, 'webapp-configs.json')
   },
 
@@ -235,8 +379,29 @@ window.services = {
     }
   },
 
-  // Basic Auth 代理
-  setupAppProxy,
+  // Basic Auth 代理（每个应用独立端口）
+  async setupAppProxy(appId, targetUrl, username, password) {
+    await createAppProxy(appId, targetUrl, username, password)
+    return getProxyUrl(appId)
+  },
+
   getProxyUrl,
-  removeAppProxy
+  removeAppProxy,
+
+  // Cookie 管理
+  getCookies(appId) {
+    const cookies = getCookies(appId)
+    // 检查是否有任何 cookies
+    for (const domain of Object.keys(cookies)) {
+      if (cookies[domain] && cookies[domain].length > 0) {
+        return true
+      }
+    }
+    return false
+  },
+
+  clearCookies(appId) {
+    cookiesMap.delete(appId)
+    saveCookies()
+  }
 }
