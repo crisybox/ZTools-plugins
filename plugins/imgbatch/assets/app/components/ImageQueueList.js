@@ -92,16 +92,16 @@ export function renderImageQueue(state, viewport = null) {
       <div class="queue-footer">
         <div class="queue-toolbar">
           <button class="icon-button queue-toolbar__button" data-action="open-folder-input" data-tooltip="选择文件夹并导入其中的图片" aria-label="选择文件夹并导入其中的图片">
-            <span class="material-symbols-outlined">folder_open</span>
+            ${renderIcon('folder_open')}
           </button>
           <button class="icon-button queue-toolbar__button" data-action="open-file-input" data-tooltip="选择图片" aria-label="选择图片">
-            <span class="material-symbols-outlined">add_photo_alternate</span>
+            ${renderIcon('add_photo_alternate')}
           </button>
           <button class="icon-button queue-toolbar__button" data-action="clear-assets" data-tooltip="清空" aria-label="清空" ${state.assets.length ? '' : 'disabled'}>
-            <span class="material-symbols-outlined">delete_sweep</span>
+            ${renderIcon('delete_sweep')}
           </button>
           <button class="icon-button queue-toolbar__button" data-action="open-settings" data-tooltip="设置" aria-label="设置">
-            <span class="material-symbols-outlined">settings</span>
+            ${renderIcon('settings')}
           </button>
         </div>
       </div>
@@ -242,19 +242,19 @@ export function renderQueueItemFragments(asset, tool, state, index, total, compa
     ` : '',
     controlsMarkup: includeMarkup ? (sortable ? `
       <button class="icon-button" data-action="move-asset" data-direction="up" data-asset-id="${asset.id}" ${index === 0 ? 'disabled' : ''}>
-        <span class="material-symbols-outlined">keyboard_arrow_up</span>
+        ${renderIcon('keyboard_arrow_up')}
       </button>
       <button class="icon-button" data-action="move-asset" data-direction="down" data-asset-id="${asset.id}" ${index === total - 1 ? 'disabled' : ''}>
-        <span class="material-symbols-outlined">keyboard_arrow_down</span>
+        ${renderIcon('keyboard_arrow_down')}
       </button>
-      <span class="material-symbols-outlined queue-item__drag" data-tooltip="拖动排序" aria-label="拖动排序">drag_indicator</span>
+      <span class="queue-item__drag" data-tooltip="拖动排序" aria-label="拖动排序">${renderIcon('drag_indicator')}</span>
       <button class="icon-button" data-action="remove-asset" data-asset-id="${asset.id}" data-tooltip="移除" aria-label="移除">
-        <span class="material-symbols-outlined">close</span>
+        ${renderIcon('close')}
       </button>
     ` : `
       ${primaryActionMarkup}
       <button class="icon-button" data-action="remove-asset" data-asset-id="${asset.id}" data-tooltip="移除" aria-label="移除">
-        <span class="material-symbols-outlined">close</span>
+        ${renderIcon('close')}
       </button>
     `) : '',
   }
@@ -462,3 +462,4 @@ function escapeHtml(value = '') {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
 }
+import { renderIcon } from './icons.js'

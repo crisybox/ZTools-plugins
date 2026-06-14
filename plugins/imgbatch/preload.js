@@ -2,8 +2,11 @@ const { ipcRenderer, nativeImage, shell } = require('electron')
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
+const Module = require('module')
 const { execFileSync, fork } = require('child_process')
 const { getManualCropDisplaySize: computeManualCropDisplaySize, getManualCropStageMetrics: computeManualCropStageMetrics } = require('./lib/manual-crop-stage.cjs')
+
+initializeRuntimePackagePaths()
 
 const IMAGE_EXTENSIONS = new Set([
   '.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.tiff', '.tif', '.avif', '.ico'
@@ -140,6 +143,20 @@ function toNumber(value, fallback = 0) {
 
 function toInteger(value, fallback = 0) {
   return Math.round(toNumber(value, fallback))
+}
+
+function initializeRuntimePackagePaths() {
+  const runtimePackagesPath = path.join(__dirname, 'runtime-packages')
+  if (!fs.existsSync(runtimePackagesPath)) return
+  const nodePathEntries = String(process.env.NODE_PATH || '')
+    .split(path.delimiter)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+  if (!nodePathEntries.includes(runtimePackagesPath)) {
+    nodePathEntries.unshift(runtimePackagesPath)
+    process.env.NODE_PATH = nodePathEntries.join(path.delimiter)
+    Module._initPaths()
+  }
 }
 
 function resolveMeasureOffset(value, total, fallback = 0) {
@@ -977,6 +994,7 @@ function normalizeRunConfig(toolId, config = {}) {
       angle: clampNumber(config.angle, -360, 360, 0),
       autoCrop: Boolean(config.autoCrop),
       keepAspectRatio: Boolean(config.keepAspectRatio),
+      transparentBackground: Boolean(config.transparentBackground),
       background: sanitizeText(config.background, '#ffffff'),
       quality: clampNumber(config.quality, 1, 100, 90),
     }
@@ -1109,6 +1127,7 @@ function prepareRunPayload(toolId, config, assets, destinationPath, options = {}
     createdAt,
     runId: run.runId,
     runFolderName: run.runFolderName,
+    allowLargeCanvas: Boolean(options?.allowLargeCanvas),
   }
 }
 
@@ -1119,12 +1138,17 @@ let launchHooksInstalled = false
 let previewLifecycleCleanupInstalled = false
 let delayedPreviewCleanupTimer = null
 let lastHandledCopiedFilesSignature = ''
+let lastHandledCopiedFilesAt = 0
 const pluginStartupAt = Date.now()
 const MAX_CONSUMED_HOST_LAUNCH_SIGNATURES = 12
 const CLIPBOARD_LAUNCH_LOOKBACK_MS = 15000
 const CLIPBOARD_LAUNCH_POLL_INTERVAL_MS = 80
 const CLIPBOARD_LAUNCH_POLL_TIMEOUT_MS = 420
 const MAX_INITIAL_CLIPBOARD_TOKEN_AGE_MS = 1500
+const CLIPBOARD_ON_CHANGE_LAUNCH_WINDOW_MS = 5000
+let lastHostLaunchEventAt = 0
+let lastActionableHostLaunchEventAt = 0
+let lastClipboardLaunchCandidateAt = 0
 
 function getHostApi() {
   return globalThis.ztools || {}
@@ -1239,6 +1263,83 @@ function extractClipboardEntryTimestamp(entry) {
     entry.updatedAt,
     entry.createdAt,
   ].map((value) => normalizeClipboardEntryTimestamp(value)).find((value) => value > 0) || 0
+}
+
+function isClipboardLaunchCandidate(value) {
+  const entries = extractClipboardHistoryEntries(value)
+  for (const entry of entries) {
+    const type = sanitizeText(entry?.type).toLowerCase()
+    if (type.includes('file') || type.includes('image') || type.includes('img')) return true
+    if (sanitizeText(entry?.path) || sanitizeText(entry?.filePath)) return true
+  }
+  return normalizeCopiedFilePaths(value).length > 0
+}
+
+function getClipboardLaunchReferenceTimestamp(minClipboardTimestamp = 0) {
+  if (Number.isFinite(minClipboardTimestamp) && minClipboardTimestamp > 0) return minClipboardTimestamp
+  if (lastClipboardLaunchCandidateAt && Date.now() - lastClipboardLaunchCandidateAt <= CLIPBOARD_LAUNCH_LOOKBACK_MS) {
+    return lastClipboardLaunchCandidateAt
+  }
+  if (lastHostLaunchEventAt) return lastHostLaunchEventAt
+  if (lastActionableHostLaunchEventAt) return lastActionableHostLaunchEventAt
+  return pluginStartupAt
+}
+
+function canFallbackToCopiedFilesAfterEmptyPending(minClipboardTimestamp = 0) {
+  const referenceTimestamp = getClipboardLaunchReferenceTimestamp(minClipboardTimestamp)
+  return referenceTimestamp !== pluginStartupAt
+}
+
+function hasRecentClipboardLaunchCandidate() {
+  return Boolean(
+    lastClipboardLaunchCandidateAt
+    && Date.now() - lastClipboardLaunchCandidateAt <= CLIPBOARD_LAUNCH_LOOKBACK_MS,
+  )
+}
+
+function shouldEnqueueLifecycleLaunch(copiedSnapshot = readCopiedFilesSnapshot()) {
+  return copiedSnapshot.paths.length > 0 || hasRecentClipboardLaunchCandidate()
+}
+
+function enqueueLifecycleLaunch(source) {
+  const eventAt = recordHostLaunchEvent({ code: 'image-batch', __ts: Date.now(), source })
+  const copiedSnapshot = readCopiedFilesSnapshot()
+  if (!shouldEnqueueLifecycleLaunch(copiedSnapshot)) {
+    appendLaunchDebugLog('lifecycle-launch-skipped-no-input', {
+      source,
+      eventAt,
+      copiedFileCount: copiedSnapshot.paths.length,
+      copiedPaths: copiedSnapshot.paths.slice(0, 12),
+      lastClipboardLaunchCandidateAt,
+    })
+    return
+  }
+  enqueueLaunchValue({ code: 'image-batch', __ts: eventAt, source })
+}
+
+function hasHostLaunchPendingValues(values = []) {
+  return (Array.isArray(values) ? values : []).some((value) => {
+    if (!value || typeof value !== 'object') return false
+    if (sanitizeText(value.code) === 'image-batch') return true
+    if (value.__ts || value.__assemblyId) return true
+    if (value.payload != null) return true
+    return isActionableHostLaunchParam(value)
+  })
+}
+
+function isActionableHostLaunchParam(param) {
+  if (!param || typeof param !== 'object') return false
+  if (sanitizeText(param.code) === 'image-batch') return true
+  if (param.payload != null && extractLaunchItems(param.payload).length) return true
+  return extractLaunchItems(param).length > 0
+}
+
+function recordHostLaunchEvent(param = null) {
+  lastHostLaunchEventAt = Date.now()
+  if (isActionableHostLaunchParam(param)) {
+    lastActionableHostLaunchEventAt = lastHostLaunchEventAt
+  }
+  return lastHostLaunchEventAt
 }
 
 function pickLatestClipboardEntry(entries = []) {
@@ -1436,6 +1537,9 @@ function installPreviewLifecycleCleanup() {
 
   const hostApi = getHostApi()
   const windowType = getCurrentWindowType()
+  if (!lastHandledCopiedFilesSignature) {
+    lastHandledCopiedFilesSignature = readCopiedFilesSnapshot().signature
+  }
   appendPreviewCacheDebugLog('install-preview-lifecycle-cleanup', {
     windowType,
     heartbeatFilePath,
@@ -1446,10 +1550,12 @@ function installPreviewLifecycleCleanup() {
   })
   hostApi.onPluginEnter?.(() => {
     appendPreviewCacheDebugLog('host-plugin-enter')
+    enqueueLifecycleLaunch('lifecycle-enter')
     cancelDelayedPreviewCleanup()
   })
   hostApi.onPluginReady?.(() => {
     appendPreviewCacheDebugLog('host-plugin-ready')
+    enqueueLifecycleLaunch('lifecycle-ready')
     cancelDelayedPreviewCleanup()
   })
   hostApi.onPluginDetach?.(() => {
@@ -1508,9 +1614,11 @@ function installLaunchHooks() {
     lastHandledCopiedFilesSignature = readCopiedFilesSnapshot().signature
   }
   const handleLaunch = (param) => {
+    recordHostLaunchEvent(param)
     appendLaunchDebugLog('launch-callback-raw', {
       summary: summarizeLaunchValue(param),
       extractedItems: extractLaunchItems(param).slice(0, 12),
+      actionable: isActionableHostLaunchParam(param),
       hasPayload: param?.payload != null,
       payloadSummary: param?.payload != null ? summarizeLaunchValue(param.payload) : null,
       payloadExtractedItems: param?.payload != null ? extractLaunchItems(param.payload).slice(0, 12) : [],
@@ -1523,6 +1631,33 @@ function installLaunchHooks() {
 
   hostApi.onPluginEnter?.(handleLaunch)
   hostApi.onPluginReady?.(handleLaunch)
+  if (typeof hostApi.clipboard?.onChange === 'function') {
+    hostApi.clipboard.onChange((item) => {
+      const copiedSnapshot = readCopiedFilesSnapshot()
+      const isLaunchCandidate = isClipboardLaunchCandidate(item)
+      if (isLaunchCandidate) lastClipboardLaunchCandidateAt = Date.now()
+      const ageSinceHostLaunchMs = lastHostLaunchEventAt ? Date.now() - lastHostLaunchEventAt : null
+      const isInsideLaunchWindow = typeof ageSinceHostLaunchMs === 'number'
+        && ageSinceHostLaunchMs >= 0
+        && ageSinceHostLaunchMs <= CLIPBOARD_ON_CHANGE_LAUNCH_WINDOW_MS
+      appendLaunchDebugLog('clipboard-on-change', {
+        summary: summarizeLaunchValue(item),
+        extractedItems: extractLaunchItems(item).slice(0, 12),
+        isLaunchCandidate,
+        ageSinceHostLaunchMs,
+        isInsideLaunchWindow,
+        lastClipboardLaunchCandidateAt,
+        copiedFileCount: copiedSnapshot.paths.length,
+        copiedPaths: copiedSnapshot.paths.slice(0, 12),
+      })
+      if (!isInsideLaunchWindow) return
+      if (!isLaunchCandidate) return
+      enqueueLaunchValue(item)
+      if (copiedSnapshot.paths.length) {
+        enqueueLaunchValue(copiedSnapshot.value)
+      }
+    })
+  }
 }
 
 async function waitForLaunchValue(timeoutMs = 160) {
@@ -1848,6 +1983,18 @@ async function regenerateQueueThumbnails(assets = []) {
 function ensureDirectory(targetPath) {
   if (!targetPath) return
   fs.mkdirSync(targetPath, { recursive: true })
+}
+
+function removeDirectoryIfEmpty(targetPath) {
+  if (!targetPath) return false
+  try {
+    if (!fs.existsSync(targetPath)) return false
+    if (fs.readdirSync(targetPath).length > 0) return false
+    fs.rmSync(targetPath, { recursive: true, force: true })
+    return true
+  } catch {
+    return false
+  }
 }
 
 function mapOutputFormat(toolId, asset, config) {
@@ -2752,10 +2899,11 @@ async function writeResizeAsset(sharpLib, asset, config, destinationPath) {
     })
   }
 
+  const enforceReferenceSize = config.sizeMode === 'max' || config.sizeMode === 'min'
   const resized = createTransformer(sharpLib, asset).resize({
     width,
     height,
-    fit: config.lockAspectRatio ? 'inside' : 'fill',
+    fit: enforceReferenceSize ? 'fill' : (config.lockAspectRatio ? 'inside' : 'fill'),
   })
   return writeTransformedAsset(resized, format, quality, outputPath)
 }
@@ -3161,17 +3309,25 @@ async function writeWatermarkAsset(sharpLib, asset, config, destinationPath) {
 }
 
 async function writeRotateAsset(sharpLib, asset, config, destinationPath) {
+  const useTransparentBackground = Boolean(config.transparentBackground)
   const { sourceFormat, format, outputPath } = await prepareSingleAssetWriteContext(
     sharpLib,
     asset,
     'rotate',
     config,
     destinationPath,
+    {
+      resolveFormat: (currentAsset, currentConfig, descriptorState) => (
+        useTransparentBackground && !supportsTransparentCanvasOutput(descriptorState.sourceFormat)
+          ? 'png'
+          : mapOutputFormat('rotate', currentAsset, currentConfig)
+      ),
+    },
   )
   const normalizedAngle = ((Math.round(Number(config.angle) || 0) % 360) + 360) % 360
   const transformQuality = getTransformQuality(config.quality, sourceFormat, format)
 
-  if (normalizedAngle === 0 && !config.keepAspectRatio && !config.autoCrop) {
+  if (normalizedAngle === 0 && !config.keepAspectRatio && !config.autoCrop && !useTransparentBackground) {
     return writeNoopSingleAsset(sharpLib, asset, outputPath, format, transformQuality, {
       sourceFormat,
       fallback: getAssetDimensionFallback(asset),
@@ -3179,6 +3335,7 @@ async function writeRotateAsset(sharpLib, asset, config, destinationPath) {
   }
 
   const solidBackground = hexToRgbaObject(config.background, 1)
+  const canvasBackground = useTransparentBackground ? TRANSPARENT_BG : solidBackground
   let transformed = createTransformer(sharpLib, asset)
 
   if (config.autoCrop) {
@@ -3187,7 +3344,8 @@ async function writeRotateAsset(sharpLib, asset, config, destinationPath) {
       .rotate(config.angle, { background: TRANSPARENT_BG })
       .trim()
   } else {
-    transformed = transformed.rotate(config.angle, { background: solidBackground })
+    if (useTransparentBackground) transformed = transformed.ensureAlpha()
+    transformed = transformed.rotate(config.angle, { background: canvasBackground })
   }
 
   if (config.keepAspectRatio && asset.width && asset.height) {
@@ -3195,11 +3353,11 @@ async function writeRotateAsset(sharpLib, asset, config, destinationPath) {
       width: asset.width,
       height: asset.height,
       fit: 'contain',
-      background: config.autoCrop ? TRANSPARENT_BG : solidBackground,
+      background: (config.autoCrop || useTransparentBackground) ? TRANSPARENT_BG : solidBackground,
     })
   }
 
-  if (config.autoCrop && !supportsTransparentCanvasOutput(format)) {
+  if ((config.autoCrop || useTransparentBackground) && !supportsTransparentCanvasOutput(format)) {
     transformed = transformed.flatten({ background: solidBackground })
   }
 
@@ -3668,14 +3826,18 @@ async function writeMergeImageAsset(sharpLib, payload) {
     composites[index] = composite
   }
 
-  const info = await withOutputFormat(sharpLib({
+  const canvasInput = {
     create: {
       width: totalWidth,
       height: totalHeight,
       channels: 3,
       background,
     },
-  }).composite(composites), format, quality).toFile(outputPath)
+  }
+  const canvas = payload.allowLargeCanvas
+    ? sharpLib(canvasInput, { limitInputPixels: false })
+    : sharpLib(canvasInput)
+  const info = await withOutputFormat(canvas.composite(composites), format, quality).toFile(outputPath)
   throwIfRunCancelled(payload.runId)
   for (let index = 0; index < composites.length; index += 1) {
     if (composites[index]) {
@@ -4531,6 +4693,10 @@ async function executeLocalTool(payload) {
   }
   const elapsedMs = Date.now() - startedAt
 
+  if (!processed.length) {
+    removeDirectoryIfEmpty(payload.destinationPath)
+  }
+
   const ok = processed.length > 0 && failed.length === 0
   const partial = processed.length > 0 && failed.length > 0
   const message = cancelled
@@ -4786,39 +4952,62 @@ const toolsApi = {
 
     const pendingValues = seededPendingValues || pendingLaunchValues.splice(0, pendingLaunchValues.length)
     const hadPendingValues = pendingValues.length > 0
+    const hasHostLaunchPending = hasHostLaunchPendingValues(pendingValues)
     const pendingAssets = await this.resolveLaunchInputs(pendingValues)
     appendLaunchDebugLog('get-launch-inputs-after-pending', {
       pendingCount: pendingValues.length,
       pendingAssetsCount: pendingAssets.length,
       requirePending,
       source: seededPendingValues ? 'seeded' : 'queue',
+      hasHostLaunchPending,
     })
     if (pendingAssets.length) return pendingAssets
 
-    if (requirePending && !hadPendingValues) {
+    if (requirePending && (!hadPendingValues || (includeCopiedFiles && canFallbackToCopiedFilesAfterEmptyPending(minClipboardTimestamp)))) {
       if (includeCopiedFiles) {
         const copiedSnapshot = readCopiedFilesSnapshot()
+        const clipboardReferenceTimestamp = getClipboardLaunchReferenceTimestamp(minClipboardTimestamp)
         let clipboardSnapshot = await readClipboardLaunchSnapshot()
         const initialClipboardToken = sanitizeText(clipboardSnapshot.token)
-        const initialClipboardEntryAcceptable = isClipboardEntryAcceptableForBootstrap(clipboardSnapshot.entryTimestamp, pluginStartupAt)
+        const initialClipboardEntryAcceptable = isClipboardEntryAcceptableForBootstrap(clipboardSnapshot.entryTimestamp, clipboardReferenceTimestamp)
         if (!initialClipboardEntryAcceptable) {
-          clipboardSnapshot = await waitForRecentClipboardLaunchSnapshot(initialClipboardToken, pluginStartupAt)
+          clipboardSnapshot = await waitForRecentClipboardLaunchSnapshot(initialClipboardToken, clipboardReferenceTimestamp)
         }
         const consumedSignatures = loadConsumedHostLaunchSignaturesFromStorage()
         const clipboardToken = sanitizeText(clipboardSnapshot.token)
         const clipboardTokenConsumed = clipboardToken ? consumedSignatures.includes(clipboardToken) : false
-        const clipboardEntryAgeMs = getClipboardEntryAgeMs(clipboardSnapshot.entryTimestamp, pluginStartupAt)
-        const clipboardEntryAcceptable = isClipboardEntryAcceptableForBootstrap(clipboardSnapshot.entryTimestamp, pluginStartupAt)
+        const clipboardEntryAgeMs = getClipboardEntryAgeMs(clipboardSnapshot.entryTimestamp, clipboardReferenceTimestamp)
+        const clipboardEntryAcceptable = isClipboardEntryAcceptableForBootstrap(clipboardSnapshot.entryTimestamp, clipboardReferenceTimestamp)
         const clipboardEntryAfterMinTimestamp = !minClipboardTimestamp || (
           Number.isFinite(clipboardSnapshot.entryTimestamp) && clipboardSnapshot.entryTimestamp >= minClipboardTimestamp
+        )
+        const copiedFilesSignatureChanged = Boolean(copiedSnapshot.signature && copiedSnapshot.signature !== lastHandledCopiedFilesSignature)
+        const copiedFilesCandidateRenewed = Boolean(lastClipboardLaunchCandidateAt && lastClipboardLaunchCandidateAt > lastHandledCopiedFilesAt)
+        const actionableHostLaunchFresh = Boolean(lastActionableHostLaunchEventAt && lastActionableHostLaunchEventAt > lastHandledCopiedFilesAt)
+        const hostLaunchFreshAfterHandled = Boolean(lastHandledCopiedFilesAt && lastHostLaunchEventAt && lastHostLaunchEventAt > lastHandledCopiedFilesAt)
+        const copiedFilesAcceptable = Boolean(
+          copiedSnapshot.paths.length
+          && (hasHostLaunchPending || hostLaunchFreshAfterHandled || actionableHostLaunchFresh || copiedFilesSignatureChanged || copiedFilesCandidateRenewed)
+          && canFallbackToCopiedFilesAfterEmptyPending(minClipboardTimestamp)
         )
         appendLaunchDebugLog('get-launch-inputs-copied-files-check', {
           requirePending,
           includeCopiedFiles,
           minClipboardTimestamp,
           pluginStartupAt,
+          lastHostLaunchEventAt,
+          lastActionableHostLaunchEventAt,
+          lastClipboardLaunchCandidateAt,
+          clipboardReferenceTimestamp,
           lastHandledCopiedFilesSignature,
+          lastHandledCopiedFilesAt,
           currentCopiedFilesSignature: copiedSnapshot.signature,
+          copiedFilesSignatureChanged,
+          copiedFilesCandidateRenewed,
+          actionableHostLaunchFresh,
+          hostLaunchFreshAfterHandled,
+          hasHostLaunchPending,
+          copiedFilesAcceptable,
           copiedFileCount: copiedSnapshot.paths.length,
           copiedPaths: copiedSnapshot.paths.slice(0, 12),
           initialClipboardToken,
@@ -4833,13 +5022,15 @@ const toolsApi = {
           clipboardHistorySummary: clipboardSnapshot.historySummary,
           clipboardStatusSummary: clipboardSnapshot.statusSummary,
         })
-        if (copiedSnapshot.paths.length && clipboardToken && !clipboardTokenConsumed && clipboardEntryAcceptable && clipboardEntryAfterMinTimestamp) {
+        if (copiedFilesAcceptable) {
           const copiedAssets = await this.resolveLaunchInputs([copiedSnapshot.value])
           if (copiedAssets.length) {
-            rememberConsumedHostLaunchSignature(clipboardToken)
+            if (clipboardToken) rememberConsumedHostLaunchSignature(clipboardToken)
             lastHandledCopiedFilesSignature = copiedSnapshot.signature
+            lastHandledCopiedFilesAt = Date.now()
             appendLaunchDebugLog('get-launch-inputs-consumed-clipboard-token', {
               clipboardToken,
+              copiedFilesAcceptable,
               copiedAssetCount: copiedAssets.length,
               copiedFilesSignature: copiedSnapshot.signature,
             })

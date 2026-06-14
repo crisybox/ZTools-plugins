@@ -9,6 +9,7 @@ import Pinyin from '../tools/Pinyin/index.vue'
 import Qrcode from '../tools/Qrcode/index.vue'
 import HTMLPreview from '../tools/HTMLPreview/index.vue'
 import TimeConvert from '../tools/TimeConvert/index.vue'
+import TextCompress from '../tools/TextCompress/index.vue'
 
 export interface Tool {
   code: string
@@ -50,6 +51,7 @@ export const categories: Category[] = [
     code: 'dev',
     tools: [
       { code: 'htmlpreview', explain: 'HTML预览', icon: '', component: HTMLPreview },
+      { code: 'textcompress', explain: '压缩文本', icon: '', component: TextCompress },
     ]
   }
 ]

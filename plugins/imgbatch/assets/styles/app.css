@@ -51,7 +51,7 @@ body {
   pointer-events: auto;
 }
 
-.nav-item .material-symbols-outlined,
+.nav-item .app-icon,
 .nav-item span {
   pointer-events: none;
 }
@@ -305,6 +305,11 @@ html {
   border-radius: 16px;
   color: var(--on-surface-variant);
   transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.nav-item .app-icon {
+  width: 22px;
+  height: 22px;
 }
 
 .nav-item:hover {
@@ -1937,7 +1942,7 @@ html {
   pointer-events: auto;
 }
 
-.nav-item .material-symbols-outlined,
+.nav-item .app-icon,
 .nav-item span {
   pointer-events: none;
 }
@@ -2360,7 +2365,7 @@ html {
   pointer-events: auto;
 }
 
-.nav-item .material-symbols-outlined,
+.nav-item .app-icon,
 .nav-item span {
   pointer-events: none;
 }
@@ -2910,6 +2915,13 @@ html {
   background: rgba(73, 86, 180, 0.2) !important;
 }
 
+.rotate-preset-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+}
+
 .color-field {
   --color-preview: #FFFFFF;
   display: grid;
@@ -3054,9 +3066,9 @@ html {
   box-shadow: 0 8px 20px rgba(28, 34, 79, 0.12);
 }
 
-.preview-modal__actions .preview-modal__close .material-symbols-outlined {
-  font-size: 22px;
-  line-height: 1;
+.preview-modal__actions .preview-modal__close .app-icon {
+  width: 22px;
+  height: 22px;
 }
 
 .preview-modal--expanded {
@@ -4861,8 +4873,9 @@ body.manual-crop--dragging-handle .manual-handle {
   box-shadow: none !important;
 }
 
-.manual-footer__ratio-trigger .material-symbols-outlined {
-  font-size: 22px;
+.manual-footer__ratio-trigger .app-icon {
+  width: 22px;
+  height: 22px;
 }
 
 .manual-footer__ratio-shell > .select-shell__menu {
@@ -4887,8 +4900,8 @@ body.manual-crop--dragging-handle .manual-handle {
   padding: 0;
 }
 
-.manual-toolbar--crop .icon-button .material-symbols-outlined,
-.manual-toolbar--crop .manual-footer__ratio-trigger .material-symbols-outlined {
+.manual-toolbar--crop .icon-button .app-icon,
+.manual-toolbar--crop .manual-footer__ratio-trigger .app-icon {
   margin: 0;
 }
 
@@ -5774,4 +5787,55 @@ body.manual-crop--dragging-handle .manual-handle {
 
 .app-modal__footer [data-action='delete-selected-preset']:active {
   background: rgba(190, 55, 55, 0.2) !important;
+}
+
+.app-modal__dialog--rotate-presets {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.rotate-preset-manager {
+  display: grid;
+  gap: 16px;
+}
+
+.rotate-preset-manager__input-row {
+  display: grid;
+  gap: 12px;
+}
+
+.rotate-preset-manager__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.rotate-preset-manager__list {
+  display: grid;
+  gap: 10px;
+  max-height: min(360px, 48vh);
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.rotate-preset-manager__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(73, 86, 180, 0.06);
+  border: 1px solid rgba(73, 86, 180, 0.1);
+}
+
+.rotate-preset-manager__value {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--on-surface);
+}
+
+.rotate-preset-manager__item-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }

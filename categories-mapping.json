@@ -6,7 +6,9 @@
     "icon": "https://raw.githubusercontent.com/ZToolsCenter/ZTools-plugins/refs/heads/main/icons/productivity.png",
     "list": [
       "ai-helper",
+      "ai-skills-manager",
       "anywhere",
+      "batch-rename",
       "bookmarks",
       "calculation-paper",
       "chrome-history",
@@ -15,13 +17,22 @@
       "english-typing-practice",
       "he-calendar",
       "memo-quick-paste",
+      "my-calculator",
+      "mt-ocr",
       "ocr",
+      "ocr-new",
       "ocr-pro",
       "pomodoro-timer",
+      "floating-todo",
+      "kuke-ai-agent",
+      "saladict-ztools",
+      "shorthand-box",
       "sticky-note",
       "totodo",
+      "wechat-ocr",
       "whiteboard",
-      "project-manager"
+      "project-manager",
+      "ztools-simpletimer"
     ]
   },
   {
@@ -30,19 +41,42 @@
     "description": "面向开发者的专业工具",
     "icon": "https://raw.githubusercontent.com/ZToolsCenter/ZTools-plugins/refs/heads/main/icons/development.png",
     "list": [
+      "code-snippets",
       "code-screenshot",
+      "codecalc",
+      "com-ztools-timestamp",
       "cron",
+      "curl-tool",
       "ctool",
+      "devbox",
+      "developer-codec-tools",
       "diff-compare",
       "json-editor",
       "json-tools",
       "latex-ocr",
+      "linuxcmddoc",
+      "mybatis-sql-formatter",
+      "myplugins",
+      "my-hash-tool",
       "port-use",
+      "random-data",
       "redis-client",
+      "showcode",
+      "sql-utils",
+      "sqlmate",
+      "srktoolbox",
+      "timestamp",
       "tiny-rdm",
+      "virtual-data",
       "vimtutor",
+      "vscode-history",
+      "ztool-vsc-recent",
+      "zapapi",
       "jet-plugin",
-      "variable-name"
+      "variable-name",
+      "zhi-interaction",
+      "ztools-developer-plugin",
+      "ztools-node-manager"
     ]
   },
   {
@@ -50,7 +84,15 @@
     "title": "系统工具",
     "description": "系统级实用工具",
     "icon": "https://raw.githubusercontent.com/ZToolsCenter/ZTools-plugins/refs/heads/main/icons/system.png",
-    "list": ["everything", "mac-system-preference-ztools-plugin", "killprocess"]
+    "list": [
+      "automode",
+      "everything",
+      "file-renamer",
+      "mac-file-search",
+      "mac-system-preference-ztools-plugin",
+      "killprocess",
+      "topwindow"
+    ]
   },
   {
     "key": "media",
@@ -58,10 +100,16 @@
     "description": "图片与音视频处理",
     "icon": "https://raw.githubusercontent.com/ZToolsCenter/ZTools-plugins/refs/heads/main/icons/media.png",
     "list": [
+      "clipboard-image-paintbrush",
+      "colors",
+      "doutu",
       "ibox-wallpaper",
+      "imgbatch",
       "long-screenshot",
       "musicsquare",
+      "piclist-plugin",
       "screen-recorder",
+      "shortcut-capture",
       "splayer-z",
       "tinypng",
       "video-parse"
@@ -72,7 +120,16 @@
     "title": "文本处理",
     "description": "文本编辑与格式化工具",
     "icon": "https://raw.githubusercontent.com/ZToolsCenter/ZTools-plugins/refs/heads/main/icons/text.png",
-    "list": ["ascll-art-font", "goose-note", "markdown"]
+    "list": [
+      "ascll-art-font",
+      "ascii-tree",
+      "file-tree",
+      "goose-note",
+      "markdown",
+      "plain-text",
+      "text-copy",
+      "traditional-simplified-cn"
+    ]
   },
   {
     "key": "game",
@@ -88,7 +145,13 @@
     "icon": "https://raw.githubusercontent.com/ZToolsCenter/ZTools-plugins/refs/heads/main/icons/network.png",
     "list": [
       "domain-helper",
+      "githubproxy",
+      "hooost",
+      "ip-switcher",
       "local-ip",
+      "remote-manager",
+      "ssh-screenshot",
+      "subnet-calculator",
       "swap-file",
       "url-wizard",
       "wifi-export-tool"
@@ -102,10 +165,12 @@
     "list": [
       "floating",
       "lihua",
+      "otp-2fa",
       "qrcode-helper",
       "quickcommand",
       "random-password",
       "tiny-clock",
+      "todo-neo",
       "today-gold-price",
       "utools-upassword",
       "yanhua"

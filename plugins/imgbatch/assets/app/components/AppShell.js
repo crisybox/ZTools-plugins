@@ -3,6 +3,7 @@ import { renderSideNav } from './SideNav.js'
 import { renderTopBar } from './TopBar.js'
 import { renderImageQueue } from './ImageQueueList.js'
 import { renderToolPage } from '../pages/index.js'
+import { renderIcon } from './icons.js'
 
 export function getAppShellMode(state) {
   const tool = TOOL_MAP[state.activeTool]
@@ -110,7 +111,7 @@ function renderSettingsWorkspace(dialog) {
             <div class="select-shell settings-select ${dialog.settingsSelectOpen ? 'is-open' : ''}">
               <button type="button" class="select-shell__value" data-action="toggle-config-select" aria-haspopup="listbox" aria-expanded="${dialog.settingsSelectOpen ? 'true' : 'false'}">
                 <span class="select-shell__text">${escapeHtml((options.find(([value]) => value === mode) || options[0])[1])}</span>
-                <span class="material-symbols-outlined select-shell__icon">expand_more</span>
+                ${renderIcon('expand_more', 'select-shell__icon')}
               </button>
               <div class="select-shell__menu" role="listbox">
                 ${options.map(([value, label]) => `
@@ -138,7 +139,7 @@ function renderSettingsWorkspace(dialog) {
             <div class="select-shell settings-select ${dialog.performanceSelectOpen ? 'is-open' : ''}">
               <button type="button" class="select-shell__value" data-action="toggle-config-select" aria-haspopup="listbox" aria-expanded="${dialog.performanceSelectOpen ? 'true' : 'false'}">
                 <span class="select-shell__text">${escapeHtml((performanceOptions.find(([value]) => value === performanceMode) || performanceOptions[1])[1])}</span>
-                <span class="material-symbols-outlined select-shell__icon">expand_more</span>
+                ${renderIcon('expand_more', 'select-shell__icon')}
               </button>
               <div class="select-shell__menu" role="listbox">
                 ${performanceOptions.map(([value, label]) => `
@@ -158,7 +159,7 @@ function renderSettingsWorkspace(dialog) {
             <div class="select-shell settings-select">
               <button type="button" class="select-shell__value" data-action="toggle-config-select" aria-haspopup="listbox" aria-expanded="false">
                 <span class="select-shell__text">${escapeHtml((queueThumbnailOptions.find(([value]) => value === queueThumbnailSize) || queueThumbnailOptions[2])[1])}</span>
-                <span class="material-symbols-outlined select-shell__icon">expand_more</span>
+                ${renderIcon('expand_more', 'select-shell__icon')}
               </button>
               <div class="select-shell__menu" role="listbox">
                 ${queueThumbnailOptions.map(([value, label]) => `
@@ -196,6 +197,9 @@ function renderSettingsWorkspace(dialog) {
 function renderPresetModal(state) {
   const dialog = state.presetDialog
   if (!dialog?.visible) return ''
+  if (dialog.mode === 'rotate-presets') {
+    return renderRotatePresetModal(dialog)
+  }
 
   const presets = state.presetsByTool?.[dialog.toolId] || []
   const toolLabel = TOOL_MAP[dialog.toolId]?.label || dialog.toolId
@@ -205,7 +209,7 @@ function renderPresetModal(state) {
     <div class="app-modal" data-action="close-preset-dialog">
       <div class="app-modal__dialog app-modal__dialog--preset">
         <button class="app-modal__close" data-action="close-preset-dialog" data-tooltip="关闭" aria-label="关闭">
-          <span class="material-symbols-outlined">close</span>
+          ${renderIcon('close')}
         </button>
         <div class="app-modal__header">
           <div class="app-modal__title">${modeTitle}</div>
@@ -267,6 +271,76 @@ function renderPresetModal(state) {
   `
 }
 
+function renderRotatePresetModal(dialog) {
+  const draftAngles = Array.isArray(dialog.presetAnglesDraft) ? dialog.presetAnglesDraft : []
+
+  return `
+    <div class="app-modal" data-action="close-preset-dialog">
+      <div class="app-modal__dialog app-modal__dialog--preset app-modal__dialog--rotate-presets">
+        <button class="app-modal__close" data-action="close-preset-dialog" data-tooltip="关闭" aria-label="关闭">
+          ${renderIcon('close')}
+        </button>
+        <div class="app-modal__header">
+          <div class="app-modal__title">常用角度调整</div>
+          <div class="app-modal__subtitle">旋转</div>
+        </div>
+        <div class="rotate-preset-manager">
+          <div class="rotate-preset-manager__input-row">
+            <label class="setting-row setting-row--stack">
+              <span class="setting-row__header">
+                <span class="setting-row__label">添加角度</span>
+              </span>
+              <span class="input-shell">
+                <input
+                  class="text-input"
+                  type="number"
+                  inputmode="numeric"
+                  min="-360"
+                  max="360"
+                  step="1"
+                  value="${escapeHtml(dialog.angleInput || '')}"
+                  placeholder="例如 30"
+                  data-action="change-rotate-preset-input"
+                  aria-label="输入要加入常用角度的数值"
+                />
+              </span>
+            </label>
+            <div class="rotate-preset-manager__toolbar">
+              <button type="button" class="secondary-button secondary-button--compact watermark-picker-button" data-action="add-rotate-preset-dialog-item">添加角度</button>
+              <button type="button" class="secondary-button secondary-button--compact watermark-picker-button" data-action="sort-rotate-preset-dialog-items">按角度排序</button>
+              <button type="button" class="secondary-button secondary-button--compact watermark-picker-button" data-action="reset-rotate-preset-dialog-items">恢复默认</button>
+            </div>
+          </div>
+          <div class="rotate-preset-manager__list">
+            ${draftAngles.length
+              ? draftAngles.map((angle, index) => `
+                  <div class="rotate-preset-manager__item">
+                    <div class="rotate-preset-manager__value">${escapeHtml(`${angle}°`)}</div>
+                    <div class="rotate-preset-manager__item-actions">
+                      <button type="button" class="icon-button" data-action="move-rotate-preset-dialog-item" data-direction="up" data-index="${index}" aria-label="上移" ${index === 0 ? 'disabled' : ''}>
+                        ${renderIcon('keyboard_arrow_up')}
+                      </button>
+                      <button type="button" class="icon-button" data-action="move-rotate-preset-dialog-item" data-direction="down" data-index="${index}" aria-label="下移" ${index === draftAngles.length - 1 ? 'disabled' : ''}>
+                        ${renderIcon('keyboard_arrow_down')}
+                      </button>
+                      <button type="button" class="icon-button" data-action="remove-rotate-preset-dialog-item" data-index="${index}" aria-label="删除">
+                        ${renderIcon('delete')}
+                      </button>
+                    </div>
+                  </div>
+                `).join('')
+              : '<div class="preset-empty">当前还没有常用角度，添加后会显示在这里。</div>'}
+          </div>
+        </div>
+        <div class="app-modal__footer">
+          <button type="button" class="secondary-button" data-action="close-preset-dialog">取消</button>
+          <button type="button" class="primary-button" data-action="confirm-rotate-preset-dialog">保存调整</button>
+        </div>
+      </div>
+    </div>
+  `
+}
+
 function renderConfirmModal(dialog) {
   if (!dialog?.visible) return ''
 
@@ -274,7 +348,7 @@ function renderConfirmModal(dialog) {
     <div class="app-modal" data-action="close-confirm-dialog">
       <div class="app-modal__dialog app-modal__dialog--preset">
         <button class="app-modal__close" data-action="close-confirm-dialog" data-tooltip="关闭" aria-label="关闭">
-          <span class="material-symbols-outlined">close</span>
+          ${renderIcon('close')}
         </button>
         <div class="app-modal__header">
           <div class="app-modal__title">${escapeHtml(dialog.title || '请确认')}</div>
@@ -476,23 +550,23 @@ function renderPreviewActions({ mode = 'slider', isExpanded = false, canSave = f
   const fullscreenButton = mode === 'split'
     ? `
           <button class="preview-modal__close" data-action="toggle-preview-compare-fullscreen" data-tooltip="${isExpanded ? '\u7f29\u5c0f\u663e\u793a' : '\u5168\u5c4f\u663e\u793a'}" aria-label="${isExpanded ? '\u7f29\u5c0f\u663e\u793a' : '\u5168\u5c4f\u663e\u793a'}">
-            <span class="material-symbols-outlined">${isExpanded ? 'fullscreen_exit' : 'fullscreen'}</span>
+            ${renderIcon(isExpanded ? 'fullscreen_exit' : 'fullscreen')}
           </button>`
     : ''
   const saveButton = canSave
     ? `
           <button class="preview-modal__close" data-action="save-preview-result" data-tooltip="保存当前预览" aria-label="保存当前预览">
-            <span class="material-symbols-outlined">save</span>
+            ${renderIcon('save')}
           </button>`
     : ''
   return `
         <div class="preview-modal__actions">
           ${saveButton}
           <button class="preview-modal__close" data-action="toggle-preview-help" data-tooltip="查看操作说明" aria-label="查看操作说明">
-            <span class="material-symbols-outlined">help</span>
+            ${renderIcon('help')}
           </button>${fullscreenButton}
           <button class="preview-modal__close" data-action="close-preview-modal" data-tooltip="\u5173\u95ed" aria-label="\u5173\u95ed">
-            <span class="material-symbols-outlined">close</span>
+            ${renderIcon('close')}
           </button>
         </div>`
 }

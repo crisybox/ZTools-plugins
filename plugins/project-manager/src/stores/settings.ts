@@ -41,6 +41,7 @@ export const useSettingsStore = defineStore('settings', () => {
     autoUpdate: true,
     trayEnabled: true,
     closeAction: 'ask',
+    autoLaunch: false,
     gitAiEnabled: false,
     gitAiPrimaryService: createDefaultAiService(),
     gitAiStream: true,
@@ -96,6 +97,10 @@ export const useSettingsStore = defineStore('settings', () => {
       parsed.gitAiPrimaryService = normalizeAiService(parsed.gitAiPrimaryService, createDefaultAiService());
       if (typeof parsed.gitAiStream !== 'boolean') {
         parsed.gitAiStream = true;
+      }
+      // Migrate usageWeightEnabled to sortMode
+      if (!parsed.sortMode) {
+        parsed.sortMode = parsed.usageWeightEnabled ? 'smart' : 'default';
       }
       settings.value = { ...settings.value, ...parsed };
     } catch (e) {

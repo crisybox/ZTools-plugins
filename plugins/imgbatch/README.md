@@ -1,17 +1,36 @@
-﻿# Imgbatch
+# 图片批量处理
 
 ## 🤖 关于本项目
 
 本项目的**所有代码均由 AI（Artificial Intelligence）生成**，项目作者本人不具备相关编程知识，对代码内容不作任何技术层面的解释或保证。如果你遇到问题或有改进想法，欢迎自行修改、Fork 或提交 Issue。
 
-Imgbatch 是一个面向 ZTools 的图片批量处理插件，提供本地离线的多种图片处理能力，适合快速处理一批图片并统一输出结果。
+图片批量处理是一个面向 ZTools 的图片批量处理插件，提供本地离线的多种图片处理能力，适合快速处理一批图片并统一输出结果。
 
-当前版本：`0.1.5`
+当前版本：`0.1.8`
+
+## 0.1.8 更新
+
+- 恢复插件列表和搜索中的直接打开入口，修正官方插件商店安装后提示“无法直接打开”的问题
+- 保留超级面板图片上下文导入能力，同时继续避免无图片输入时误触发图片导入重试
+
+## 0.1.7 更新
+
+- 修正 ZTools 超级面板多次带入图片不稳定的问题，支持间隔一段时间后继续从超级面板带入新图片
+- 收紧无图片输入时的生命周期导入判断，避免未选中图片时误触发空导入重试
+- 旋转功能新增透明背景输出；不支持透明背景的格式会自动转为支持透明的输出格式
+- 合并为图片在使用列表最大宽高时，如果预估画布过大，会先给出确认提示，由用户决定是否继续生成
+- 修正处理失败后仍显示结果页底部操作按钮、并留下空输出目录的问题
+
+## 0.1.6 更新
+
+- 修正水印页点击锚点位置会触发页面回顶的问题，局部重刷时会保留工具面板滚动位置
+- 旋转页将常用角度编辑改为单独弹框，支持添加、删除、排序和恢复默认角度
+- 收紧常用角度编辑行为，避免仅修改 UI 偏好时把现有预览结果误标为需要重新预览
+- 图标改为内置本地 SVG 方案，不再依赖外网图标资源，离线首次打开也能正常显示
+- 修正“修改尺寸 -> 对齐最大 / 对齐最小”在锁定比例开启时只会塞进参考框、无法真正统一输出尺寸的问题
 
 ## 0.1.5 更新
 
-- 补齐插件运行时依赖，修正从官方插件仓库安装后缺少 `sharp` 导致本地图片处理无法执行的问题
-- 修正合并为 PDF 时缺少 `fork` 引入导致的执行失败问题
 - 调整插件包元数据，补齐 `platform` 与 `unpack` 配置，提升官方仓库分发包的运行兼容性
 - 收紧 `plugin.json` 为正式安装包可用格式，移除会导致已安装插件空白页的开发入口配置
 - 统一插件标题显示为 `Imgbatch`
@@ -41,73 +60,9 @@ Imgbatch 是一个面向 ZTools 的图片批量处理插件，提供本地离线
 - 设置页改为全屏工作区模式，支持滚动和 `Esc` 退出
 - 修正结果页、继续处理、确认框/预设框 `Esc` 等一批交互回归问题
 
-## 界面预览
+## 界面说明
 
-### 图片压缩
-
-![图片批量处理 图片压缩](./docs/screenshots/compression.png)
-
-### 格式转换
-
-![图片批量处理 格式转换](./docs/screenshots/format.png)
-
-### 修改尺寸
-
-![图片批量处理 修改尺寸](./docs/screenshots/resize.png)
-
-### 添加水印
-
-![图片批量处理 添加水印](./docs/screenshots/watermark.png)
-
-### 添加圆角
-
-![图片批量处理 添加圆角](./docs/screenshots/corners.png)
-
-### 补边留白
-
-![图片批量处理 补边留白](./docs/screenshots/padding.png)
-
-### 裁剪
-
-![图片批量处理 裁剪](./docs/screenshots/crop.png)
-
-### 旋转
-
-![图片批量处理 旋转](./docs/screenshots/rotate.png)
-
-### 翻转
-
-![图片批量处理 翻转](./docs/screenshots/flip.png)
-
-### 合并为 PDF
-
-![图片批量处理 合并为 PDF](./docs/screenshots/merge-pdf.png)
-
-### 合并为图片
-
-![图片批量处理 合并为图片](./docs/screenshots/merge-image.png)
-
-### 合并为 GIF
-
-![图片批量处理 合并为 GIF](./docs/screenshots/merge-gif.png)
-
-### 手动裁剪
-
-![图片批量处理 手动裁剪](./docs/screenshots/manual-crop.png)
-
-### 预览效果
-
-![图片批量处理 预览双栏对比图](./docs/screenshots/preview1.png)
-
-![图片批量处理 预览前后对比图](./docs/screenshots/preview2.png)
-
-### 设置页
-
-![图片批量处理 设置页](./docs/screenshots/settings.png)
-
-### 处理结果对比
-
-![图片批量处理 处理结果对比](./docs/screenshots/result.png)
+仓库内截图资源已移除，避免发布目录和官方插件仓库持续携带大体积预览图片。插件界面与交互以本地 ZTools 客户端中的实际表现为准。
 
 ## 功能
 
@@ -173,6 +128,8 @@ MIT
 图片批量处理/
 ├── assets/         # 前端页面、状态、样式与组件
 ├── lib/            # preload 侧共享运行逻辑
+├── scripts/        # 发布和测试辅助脚本
+├── runtime-packages/ # CLI 发布目录中的运行时依赖（仅发布产物中出现）
 ├── index.html      # 插件页面入口
 ├── plugin.json     # ZTools 插件配置
 ├── preload.js      # 本地处理与 ZTools API 桥接
@@ -196,3 +153,72 @@ npm install
 
 如果你想直接体验插件，请前往仓库的 Releases 页面下载对应版本的打包文件，并按 ZTools 的插件安装方式导入使用。
 
+## CLI 发布流程
+
+当前官方推荐使用 `@ztools-center/plugin-cli` 发布到 `ZTools-plugins`。
+
+### 当前项目的特殊点
+
+Imgbatch 不是纯前端插件，`preload.js` 运行时依赖：
+
+- `sharp`
+- `pdf-lib`
+- `gifenc`
+
+其中 `sharp` 包含原生模块与动态库。`plugin-cli` 默认会忽略：
+
+- `node_modules/`
+- `dist/`
+- `build/`
+
+因此 **不能直接拿源码根目录执行 `ztools publish`**，否则官方插件仓库里的分发包会丢失运行时依赖。
+
+### 当前可用做法
+
+先生成 CLI 兼容发布目录：
+
+```bash
+npm run build:cli-package
+```
+
+生成一个用于 CLI 发布的相对目录：
+
+- 目录名由构建脚本生成
+- 该目录位于仓库根目录下
+
+这份目录具有这些特点：
+
+- 不包含 `node_modules/`
+- 运行时依赖被整理到 `runtime-packages/`
+- `preload.js` 启动时会自动把 `runtime-packages/` 加入模块搜索路径
+- `plugin.json` 已补齐 `runtime-packages/**/*.node` 和 `runtime-packages/**/*.dll` 的 `unpack` 规则
+
+### 发布步骤
+
+1. 在源码仓库完成修改并验证功能。
+2. 执行：
+
+```bash
+npm run build:cli-package
+```
+
+3. 进入生成好的 CLI 发布目录，初始化独立 git 仓库并提交一次：
+
+```bash
+git init
+git add .
+git commit -m "Release Imgbatch x.y.z"
+```
+
+4. 在该目录执行：
+
+```bash
+ztools publish
+```
+
+### 注意事项
+
+- 不要直接在源码仓库根目录执行 `ztools publish`，否则会把本地资料目录、文档和不适合发布的文件一起带进插件仓库。
+- `plugin-cli` 会要求当前目录是干净 git 仓库，发布目录里不能留未提交改动。
+- `runtime-packages/` 是当前适配 `plugin-cli` 的关键目录，不要随意改回 `node_modules/`。
+- 若后续官方 `plugin-cli` 调整忽略规则或支持原生依赖发布，再重新评估是否继续保留这套兼容目录。

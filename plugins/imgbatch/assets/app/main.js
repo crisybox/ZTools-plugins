@@ -37,6 +37,7 @@ import {
 } from './lib/manual-crop-flow.js'
 import { updateManualCropSummaryResultView } from './lib/manual-crop-results.js'
 import { createManualCropRuntime } from './lib/manual-crop-runtime.js'
+import { renderIconSvg } from './components/icons.js'
 import { getFormatCapability } from './services/ztools-bridge.js'
 import { appendAssets, applyRunResult, batchStateUpdates, dismissNotification, getAssetById, getAssetIndexById, getState, moveAsset, moveAssetToTarget, pushNotification, removeAsset, replaceConfig, setActiveTool, setConfirmDialog, setPresetDialog, setPreviewModal, setResultView, setSearchQuery, setSettingsDialog, setState, setToolPresets, subscribe, updateAssetListThumbnail, updateConfig, updateSettings } from './state/store.js'
 import { cancelRun, checkStagedFiles, cleanupPreviewCache, clearPreviewCacheDirectory, createAssetDisplayUrl, deletePreset, getLaunchInputs, importItems, loadPresets, loadSettings, materializePreviewResults, openInputDialog, prepareRunPayload, regenerateQueueThumbnails, renamePreset, resolveInputPaths, revealPath, replaceOriginals, runTool, saveAllStagedResults, savePreset, saveSettings, saveStagedResult, showMainWindow, stageToolPreview, subscribeLaunchInputs, subscribeQueueThumbnails } from './services/ztools-bridge.js'
@@ -58,6 +59,7 @@ const MANUAL_CROP_RATIO_ORDER = [
 ]
 const SETTINGS_TOOL_ID = 'settings'
 const PREVIEW_CACHE_LIMIT = 12
+const DEFAULT_ROTATE_PRESET_ANGLES = [-135, -90, -45, 0, 45, 90, 135, 180]
 const WATERMARK_POSITION_LABELS = {
   'top-left': '左上',
   'top-center': '上方居中',
@@ -109,6 +111,7 @@ const pendingQueueThumbnailPatches = new Map()
 const LAUNCH_INPUT_RETRY_INTERVAL_MS = 1200
 const LAUNCH_INPUT_RETRY_WINDOW_MS = 12000
 const LAUNCH_INPUT_POST_IMPORT_RETRY_WINDOW_MS = 12000
+const LARGE_MERGE_IMAGE_PIXEL_LIMIT = 268402689
 const rootMarkupCache = {
   sideNav: '',
   topbar: '',
@@ -297,6 +300,29 @@ function updatePresetDialog(patch) {
   setPresetDialog(next)
 }
 
+function getPanelScrollNode(root = app) {
+  return root?.querySelector?.('[data-scroll-role="panel"]') || null
+}
+
+function capturePanelScrollPosition(root = app) {
+  const panelNode = getPanelScrollNode(root)
+  if (!panelNode) return null
+  return { scrollTop: Math.max(0, panelNode.scrollTop || 0) }
+}
+
+function restorePanelScrollPosition(snapshot, root = app) {
+  if (!snapshot) return
+  const apply = () => {
+    const panelNode = getPanelScrollNode(root)
+    if (!panelNode) return
+    if (Math.abs((panelNode.scrollTop || 0) - snapshot.scrollTop) > 1) {
+      panelNode.scrollTop = snapshot.scrollTop
+    }
+  }
+  apply()
+  requestAnimationFrame(apply)
+}
+
 function normalizeMeasureToggleValue(value, nextUnit) {
   const raw = String(value ?? '').trim()
   if (!raw) return nextUnit === '%' ? '%' : 'px'
@@ -389,6 +415,16 @@ function openSavePresetDialog(toolId) {
     name: '',
     selectedPresetId: '',
     setAsDefault: false,
+  })
+}
+
+function openRotatePresetDialog() {
+  setPresetDialog({
+    visible: true,
+    mode: 'rotate-presets',
+    toolId: 'rotate',
+    angleInput: '',
+    presetAnglesDraft: normalizeRotatePresetAngles(getState().configs.rotate?.presetAngles),
   })
 }
 
@@ -560,6 +596,19 @@ function confirmReplaceCurrentOriginals() {
 
 function isPreviewableTool(toolId) {
   return PREVIEWABLE_TOOLS.has(toolId)
+}
+
+function updateRotatePresetDialog(patch) {
+  const dialog = getState().presetDialog
+  if (!dialog || dialog.mode !== 'rotate-presets') return
+  updatePresetDialog(patch)
+}
+
+function moveArrayItem(list, fromIndex, toIndex) {
+  const next = [...list]
+  const [item] = next.splice(fromIndex, 1)
+  next.splice(toIndex, 0, item)
+  return next
 }
 
 function getCurrentStagedItems(activeTool, assets) {
@@ -1761,7 +1810,7 @@ function syncTopBarRoot(state, mode = getAppShellMode(state)) {
 
   const topbar = root.querySelector('.topbar')
   const toggleButton = root.querySelector('.topbar__toggle')
-  const toggleIcon = toggleButton?.querySelector('.material-symbols-outlined')
+  const toggleIcon = toggleButton?.querySelector('.app-icon')
   const titleNode = root.querySelector('.topbar__title')
   const meta = root.querySelector('.topbar__meta')
   const processButton = root.querySelector('[data-action="process-current"]')
@@ -1791,7 +1840,10 @@ function syncTopBarRoot(state, mode = getAppShellMode(state)) {
   if (titleNode.textContent !== toolLabel) titleNode.textContent = toolLabel
   if (toggleButton.dataset.tooltip !== sidebarLabel) toggleButton.dataset.tooltip = sidebarLabel
   if (toggleButton.getAttribute('aria-label') !== sidebarLabel) toggleButton.setAttribute('aria-label', sidebarLabel)
-  if (toggleIcon.textContent !== sidebarIcon) toggleIcon.textContent = sidebarIcon
+  if (toggleIcon.dataset.icon !== sidebarIcon) {
+    toggleIcon.dataset.icon = sidebarIcon
+    toggleIcon.innerHTML = renderIconSvg(sidebarIcon)
+  }
 
   let stopButton = root.querySelector('[data-action="cancel-current-run"]')
   if (state.isProcessing) {
@@ -2399,8 +2451,10 @@ function render(state) {
     const reuseQueueDuringWorkspaceRefresh = canPreserveQueueDuringWorkspaceRefresh
     if (reuseQueueDuringWorkspaceRefresh) {
       shouldCaptureWorkspaceSnapshot = false
+      const panelScrollSnapshot = capturePanelScrollPosition()
       const { root, changed } = setRootMarkup('panel', renderToolPage(state.activeTool, state))
       if (root && changed) tooltipRoots.push(root)
+      restorePanelScrollPosition(panelScrollSnapshot)
       queueQueueItemPatch()
       effectiveQueueChanged = false
     } else {
@@ -2744,6 +2798,10 @@ function attachLaunchSubscription() {
         includeCopiedFiles: true,
         requirePending: true,
       })
+      if (!assets?.length) {
+        startLaunchInputRetryWindow('subscription-empty', LAUNCH_INPUT_RETRY_WINDOW_MS)
+        return
+      }
       appendImportedAssets(assets, '已带入')
     } catch (error) {
       notify({ type: 'error', message: error?.message || '读取启动图片失败。' })
@@ -3363,6 +3421,11 @@ function attachGlobalEvents() {
       return
     }
 
+    if (action === 'open-rotate-preset-dialog') {
+      openRotatePresetDialog()
+      return
+    }
+
     if (action === 'close-preset-dialog') {
       const clickedInsideDialog = !!event.target.closest('.app-modal__dialog')
       const clickedCloseIcon = !!event.target.closest('.app-modal__close')
@@ -3453,6 +3516,12 @@ function attachGlobalEvents() {
       return
     }
 
+    if (action === 'confirm-large-merge-image-process') {
+      closeConfirmDialog()
+      await processCurrentTool(false, { allowLargeMergeImage: true })
+      return
+    }
+
     if (action === 'save-preset') {
       const toolId = target.dataset.toolId
       await savePreset(toolId, getState().configs[toolId])
@@ -3492,6 +3561,74 @@ function attachGlobalEvents() {
       })
       return
     }
+
+    if (action === 'add-rotate-preset-dialog-item') {
+      const dialog = getState().presetDialog
+      if (!dialog || dialog.mode !== 'rotate-presets') return
+      const angle = normalizeRotatePresetAngleValue(dialog.angleInput)
+      if (angle === null) {
+        notify({ type: 'error', message: '请输入 -360 到 360 之间的整数角度。' })
+        return
+      }
+      const presetAngles = normalizeRotatePresetAngles(dialog.presetAnglesDraft)
+      if (presetAngles.includes(angle)) {
+        notify({ type: 'info', message: `${angle}° 已经在常用角度里。` })
+        return
+      }
+      updateRotatePresetDialog({ presetAnglesDraft: [...presetAngles, angle], angleInput: '' })
+      return
+    }
+
+    if (action === 'remove-rotate-preset-dialog-item') {
+      const dialog = getState().presetDialog
+      if (!dialog || dialog.mode !== 'rotate-presets') return
+      const index = Number(target.dataset.index)
+      if (!Number.isInteger(index) || index < 0) return
+      const presetAngles = normalizeRotatePresetAngles(dialog.presetAnglesDraft)
+      if (index >= presetAngles.length) return
+      updateRotatePresetDialog({ presetAnglesDraft: presetAngles.filter((_, itemIndex) => itemIndex !== index) })
+      return
+    }
+
+    if (action === 'move-rotate-preset-dialog-item') {
+      const dialog = getState().presetDialog
+      if (!dialog || dialog.mode !== 'rotate-presets') return
+      const index = Number(target.dataset.index)
+      const direction = target.dataset.direction === 'down' ? 1 : -1
+      const presetAngles = normalizeRotatePresetAngles(dialog.presetAnglesDraft)
+      if (!Number.isInteger(index) || index < 0 || index >= presetAngles.length) return
+      const nextIndex = index + direction
+      if (nextIndex < 0 || nextIndex >= presetAngles.length) return
+      updateRotatePresetDialog({ presetAnglesDraft: moveArrayItem(presetAngles, index, nextIndex) })
+      return
+    }
+
+    if (action === 'sort-rotate-preset-dialog-items') {
+      const dialog = getState().presetDialog
+      if (!dialog || dialog.mode !== 'rotate-presets') return
+      updateRotatePresetDialog({
+        presetAnglesDraft: [...normalizeRotatePresetAngles(dialog.presetAnglesDraft)].sort((left, right) => left - right),
+      })
+      return
+    }
+
+    if (action === 'reset-rotate-preset-dialog-items') {
+      updateRotatePresetDialog({
+        presetAnglesDraft: [...DEFAULT_ROTATE_PRESET_ANGLES],
+        angleInput: '',
+      })
+      return
+    }
+
+    if (action === 'confirm-rotate-preset-dialog') {
+      const dialog = getState().presetDialog
+      if (!dialog || dialog.mode !== 'rotate-presets') return
+      updateConfig('rotate', { presetAngles: normalizeRotatePresetAngles(dialog.presetAnglesDraft) })
+      closePresetDialog()
+      notify({ type: 'success', message: '已更新常用角度。' })
+      return
+    }
+
     if (await handleManualCropAction(action, target, {
       advanceManualCropAfterSuccess: (asset, latestState, latestConfig) => advanceManualCropAfterSuccessFlow({
         asset,
@@ -3557,6 +3694,11 @@ function attachGlobalEvents() {
       return
     }
 
+    if (action === 'change-rotate-preset-input') {
+      updateRotatePresetDialog({ angleInput: target.value })
+      return
+    }
+
     if (action === 'set-config-range') {
       syncRangeControl(target)
       return
@@ -3571,6 +3713,12 @@ function attachGlobalEvents() {
       const toolId = target.dataset.toolId
       const key = target.dataset.key
       const value = normalizeConfigInputValue(toolId, key, target.value, target.dataset.unitMode)
+
+      if (toolId === 'rotate' && key === 'angle') {
+        updateConfig('rotate', { angle: value })
+        return
+      }
+
       const config = getState().configs[toolId] || {}
       if (config[key] !== value) {
         config[key] = value
@@ -3583,6 +3731,7 @@ function attachGlobalEvents() {
           config.useCustomRatio = useCustomRatio
         }
       }
+
     }
   })
 
@@ -4107,7 +4256,7 @@ async function previewAsset(assetId, skipResizePercentConfirm = false) {
   }
 }
 
-async function processCurrentTool(skipResizePercentConfirm = false) {
+async function processCurrentTool(skipResizePercentConfirm = false, runOptions = {}) {
   const state = getState()
   const tool = TOOL_MAP[state.activeTool]
 
@@ -4138,6 +4287,13 @@ async function processCurrentTool(skipResizePercentConfirm = false) {
 
   try {
     const assets = getAssetsForToolFlow(tool.id, state.assets, state.configs['manual-crop'])
+    if (
+      tool.id === 'merge-image'
+      && !runOptions.allowLargeMergeImage
+      && openLargeMergeImageConfirm(assets)
+    ) {
+      return
+    }
     const runner = getToolRunner(tool.id)
     const destinationPath = state.destinationPath || state.settings.defaultSavePath || ''
     const preferredRunFolderName = PREVIEW_SAVE_TOOLS.has(tool.id)
@@ -4224,7 +4380,10 @@ async function processCurrentTool(skipResizePercentConfirm = false) {
               state.configs[tool.id],
               pendingAssets,
               destinationPath,
-              preferredRunFolderName ? { preferredRunFolderName } : {},
+              {
+                ...(preferredRunFolderName ? { preferredRunFolderName } : {}),
+                ...(tool.id === 'merge-image' && runOptions.allowLargeMergeImage ? { allowLargeCanvas: true } : {}),
+              },
             )
           : null
         return { materializedResult, executedResult }
@@ -4484,6 +4643,28 @@ function parseValue(value) {
   return value
 }
 
+function normalizeRotatePresetAngleValue(value) {
+  if (value === null || value === undefined) return null
+  const raw = String(value).trim()
+  if (!raw) return null
+  const numeric = Number(raw)
+  if (!Number.isFinite(numeric)) return null
+  return Math.max(-360, Math.min(360, Math.round(numeric)))
+}
+
+function normalizeRotatePresetAngles(value) {
+  const source = Array.isArray(value) && value.length ? value : DEFAULT_ROTATE_PRESET_ANGLES
+  const seen = new Set()
+  const next = []
+  for (let index = 0; index < source.length; index += 1) {
+    const numeric = normalizeRotatePresetAngleValue(source[index])
+    if (numeric === null || seen.has(numeric)) continue
+    seen.add(numeric)
+    next.push(numeric)
+  }
+  return next
+}
+
 function normalizeConfigInputValue(toolId, key, value, unitMode = '') {
   const parsed = unitMode ? normalizeMeasureToggleValue(value, unitMode) : parseValue(value)
   if (toolId === 'padding' && ['top', 'right', 'bottom', 'left', 'unifiedMargin'].includes(key)) {
@@ -4556,6 +4737,73 @@ function openResizePercentConfirm(mode, assetId = '') {
     confirmLabel: '我确定',
     confirmAction: mode === 'preview' ? 'confirm-dangerous-resize-preview' : 'confirm-dangerous-resize-process',
     assetId,
+  })
+  return true
+}
+
+function estimateMergeImageCanvas(config = {}, assets = []) {
+  const sourceAssets = Array.isArray(assets) ? assets : []
+  if (!sourceAssets.length) return null
+  const isVertical = config.direction !== 'horizontal'
+  const spacing = Math.max(0, Number(config.spacing) || 0)
+  const preventUpscale = Boolean(config.preventUpscale)
+  const targetSpan = config.useMaxAssetSize
+    ? Math.max(1, ...sourceAssets.map((asset) => Math.max(0, Number(isVertical ? asset?.width : asset?.height) || 0)))
+    : Math.max(1, Number(config.pageWidth) || 1)
+  if (!(targetSpan > 0)) return null
+
+  let contentWidth = 0
+  let contentHeight = 0
+  for (const asset of sourceAssets) {
+    const sourceWidth = Math.max(0, Number(asset?.width) || 0)
+    const sourceHeight = Math.max(0, Number(asset?.height) || 0)
+    if (!(sourceWidth > 0 && sourceHeight > 0)) return null
+    let width = sourceWidth
+    let height = sourceHeight
+    const keepsOriginalSize = isVertical
+      ? ((preventUpscale && sourceWidth <= targetSpan) || sourceWidth === targetSpan)
+      : ((preventUpscale && sourceHeight <= targetSpan) || sourceHeight === targetSpan)
+    if (!keepsOriginalSize) {
+      const scale = isVertical
+        ? (preventUpscale ? Math.min(1, targetSpan / sourceWidth) : (targetSpan / sourceWidth))
+        : (preventUpscale ? Math.min(1, targetSpan / sourceHeight) : (targetSpan / sourceHeight))
+      width = Math.max(1, Math.round(sourceWidth * scale))
+      height = Math.max(1, Math.round(sourceHeight * scale))
+    }
+    if (isVertical) {
+      contentWidth = Math.max(contentWidth, width)
+      contentHeight += height
+    } else {
+      contentWidth += width
+      contentHeight = Math.max(contentHeight, height)
+    }
+  }
+
+  const spacingTotal = spacing * Math.max(0, sourceAssets.length - 1)
+  const width = isVertical ? contentWidth : contentWidth + spacingTotal
+  const height = isVertical ? contentHeight + spacingTotal : contentHeight
+  return {
+    width,
+    height,
+    pixels: width * height,
+  }
+}
+
+function formatMegapixels(pixels = 0) {
+  const value = Math.max(0, Number(pixels) || 0) / 1000000
+  return `${value >= 100 ? Math.round(value) : value.toFixed(1)} MP`
+}
+
+function openLargeMergeImageConfirm(assets = []) {
+  const config = getState().configs['merge-image'] || {}
+  const estimate = estimateMergeImageCanvas(config, assets)
+  if (!estimate || estimate.pixels <= LARGE_MERGE_IMAGE_PIXEL_LIMIT) return false
+  openConfirmDialog({
+    title: '确认生成超大图片',
+    subtitle: `${estimate.width} × ${estimate.height}，约 ${formatMegapixels(estimate.pixels)}`,
+    message: '当前合并设置会生成非常大的图片，处理会明显变慢，可能占用大量内存并导致 ZTools 短暂卡顿。确认不是误操作后，可以继续生成。',
+    confirmLabel: '继续生成',
+    confirmAction: 'confirm-large-merge-image-process',
   })
   return true
 }

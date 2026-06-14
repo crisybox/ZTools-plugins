@@ -7,10 +7,12 @@ layout:
   - type: fixed
     title: 最新发布
     plugins:
+      - ztools-developer-plugin
+      - zosenlink-tunnel
+      - termdock
       - clipboard
-      - bookmarks
-      - chrome-history
-      - screen-recorder
+      - ai-helper
+      - shortcut-capture
   - type: navigation
     title: 开始探索
     categories:
