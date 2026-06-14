@@ -1,10 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
-import {
-  useFavorites,
-  type GradientStop,
-  type LinearGradient,
-} from "@/utils/favorites";
+import { useFavorites, type GradientStop, type LinearGradient } from "@/utils/favorites";
 import { colorToCSS } from "@/utils/favorites";
 import { useMessage } from "@/utils/message";
 
@@ -44,8 +40,15 @@ const presets = [
 
 const angle = ref(90);
 
+const safeAngle = computed(() => {
+  if (typeof angle.value !== "number" || isNaN(angle.value)) {
+    return 90;
+  }
+  return angle.value;
+});
+
 /** 角度 → CSS 方向字符串 */
-const directionCSS = computed(() => `${angle.value}deg`);
+const directionCSS = computed(() => `${safeAngle.value}deg`);
 
 /** 点击预设：设置角度 */
 const setAngle = (a: number) => {
@@ -71,9 +74,7 @@ const gradientCSS = computed(() => colorToCSS(currentGradient.value));
 
 /** 渐变预览条的 CSS */
 const previewStops = computed(() => {
-  const sorted = [...stops.value].sort(
-    (a, b) => (a.position ?? 0) - (b.position ?? 0),
-  );
+  const sorted = [...stops.value].sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
   return sorted.map((s) => `${s.color} ${s.position ?? 0}%`).join(", ");
 });
 
@@ -141,9 +142,7 @@ const addStop = () => {
     message.warning("最多支持 8 个色标");
     return;
   }
-  const sorted = [...stops.value].sort(
-    (a, b) => (a.position ?? 0) - (b.position ?? 0),
-  );
+  const sorted = [...stops.value].sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
   let newPos = 50;
   for (let i = 0; i < sorted.length - 1; i++) {
     const a = sorted[i]?.position ?? 0;
@@ -154,8 +153,7 @@ const addStop = () => {
     }
   }
   const mixIndex = sorted.findIndex((s) => (s.position ?? 0) >= newPos);
-  const mixColor =
-    mixIndex >= 0 ? (sorted[mixIndex]?.color ?? "#888888") : "#888888";
+  const mixColor = mixIndex >= 0 ? (sorted[mixIndex]?.color ?? "#888888") : "#888888";
   stops.value.push({ color: mixColor, position: newPos });
 };
 
@@ -221,9 +219,7 @@ const reset = () => {
         background: `linear-gradient(${directionCSS}, ${previewStops})`,
       }"
     >
-      <div
-        class="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-black/20 to-transparent"
-      />
+      <div class="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-black/20 to-transparent" />
       <div
         v-for="(dot, i) in dotPositions"
         :key="i"
@@ -255,12 +251,25 @@ const reset = () => {
             />
             <div class="flex items-center gap-1">
               <input
-                v-model.number="angle"
+                :value.number="angle"
+                @input="
+                  {
+                    let newAngle = parseInt(($event.target as HTMLInputElement).value);
+                    if (!isNaN(newAngle)) {
+                      angle = newAngle;
+                    }
+                  }
+                "
+                @change="
+                  $event.target &&
+                  'value' in $event.target &&
+                  ($event.target.value = angle.toString())
+                "
                 type="number"
                 min="0"
                 max="360"
                 step="1"
-                class="w-16 rounded-lg border border-gray-200 px-2 py-1.5 text-center font-mono text-sm focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                class="w-16 rounded-lg border border-gray-200 px-2 py-1.5 text-center font-mono text-sm focus:border-blue-400 focus:ring-1 focus:ring-blue-400 focus:outline-none"
               />
               <span class="text-xs text-gray-400">°</span>
             </div>
@@ -317,18 +326,14 @@ const reset = () => {
               <input
                 type="color"
                 :value="stop.color"
-                @input="
-                  updateColor(index, ($event.target as HTMLInputElement).value)
-                "
+                @input="updateColor(index, ($event.target as HTMLInputElement).value)"
                 class="h-9 w-9 cursor-pointer rounded-lg border-0 p-0"
               />
               <!-- Hex 输入 -->
               <input
                 :value="stop.color"
-                @input="
-                  updateColor(index, ($event.target as HTMLInputElement).value)
-                "
-                class="w-24 rounded-lg border border-gray-200 px-2 py-1.5 font-mono text-sm uppercase focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                @input="updateColor(index, ($event.target as HTMLInputElement).value)"
+                class="w-24 rounded-lg border border-gray-200 px-2 py-1.5 font-mono text-sm uppercase focus:border-blue-400 focus:ring-1 focus:ring-blue-400 focus:outline-none"
                 maxlength="7"
                 spellcheck="false"
               />
@@ -337,19 +342,12 @@ const reset = () => {
                 <input
                   type="range"
                   :value="stop.position ?? 0"
-                  @input="
-                    updatePosition(
-                      index,
-                      Number(($event.target as HTMLInputElement).value),
-                    )
-                  "
+                  @input="updatePosition(index, Number(($event.target as HTMLInputElement).value))"
                   min="0"
                   max="100"
                   class="h-1.5 flex-1 cursor-pointer appearance-none rounded-full bg-gray-200 accent-blue-500"
                 />
-                <span class="w-10 text-right text-xs text-gray-500"
-                  >{{ stop.position ?? 0 }}%</span
-                >
+                <span class="w-10 text-right text-xs text-gray-500">{{ stop.position ?? 0 }}%</span>
               </div>
               <!-- 删除按钮 -->
               <button
