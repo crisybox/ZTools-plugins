@@ -169,6 +169,7 @@
     });
 
     document.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
       if (e.ctrlKey || e.metaKey) {
         if (e.key === 'a') { e.preventDefault(); openFilePicker(); }
         if (e.key === 'd') { e.preventDefault(); clearAll(); }
@@ -239,7 +240,12 @@
     img.onerror = () => {
       ztools.showNotification('加载图片失败: ' + filePath.split(/[/\\]/).pop());
     };
-    img.src = filePath.startsWith('file://') ? filePath : 'file:///' + filePath.replace(/\\/g, '/');
+    if (filePath.startsWith('file://')) {
+      img.src = filePath;
+    } else {
+      const formatted = filePath.replace(/\\/g, '/');
+      img.src = formatted.startsWith('/') ? 'file://' + formatted : 'file:///' + formatted;
+    }
   }
 
   function addImageFromFile(file) {
@@ -376,9 +382,10 @@
 
   let lastShiftTarget = -1;
   let autoScrollTimer = null;
+  let autoScrollSpeed = 0;
+  let autoScrollList = null;
 
   function startAutoScroll(listEl, clientY) {
-    stopAutoScroll();
     const rect = listEl.getBoundingClientRect();
     const edgeZone = 40;
     const topDist = clientY - rect.top;
@@ -395,10 +402,17 @@
       speed = Math.max(2, (edgeZone - bottomDist) / 3);
     }
 
+    autoScrollSpeed = speed;
+    autoScrollList = listEl;
+
     if (speed !== 0) {
-      autoScrollTimer = setInterval(() => {
-        listEl.scrollTop += speed;
-      }, 16);
+      if (!autoScrollTimer) {
+        autoScrollTimer = setInterval(() => {
+          if (autoScrollList) autoScrollList.scrollTop += autoScrollSpeed;
+        }, 16);
+      }
+    } else {
+      stopAutoScroll();
     }
   }
 
@@ -407,6 +421,8 @@
       clearInterval(autoScrollTimer);
       autoScrollTimer = null;
     }
+    autoScrollSpeed = 0;
+    autoScrollList = null;
   }
 
   function applyDragShifts(hoverIdx) {
@@ -456,6 +472,12 @@
     } else {
       totalWidth = drawSizes.reduce((sum, s) => sum + s.w, 0) + spacing * (images.length - 1) + padding * 2;
       totalHeight = Math.max(...drawSizes.map((s) => s.h)) + padding * 2;
+    }
+
+    const MAX_CANVAS_SIZE = 16384;
+    if (totalWidth > MAX_CANVAS_SIZE || totalHeight > MAX_CANVAS_SIZE) {
+      ztools.showNotification(`拼接尺寸过大 (${totalWidth}×${totalHeight})，请减少图片或使用"缩小大图"模式`);
+      return;
     }
 
     canvas.width = totalWidth;
@@ -611,22 +633,28 @@
   }
 
   function doStash() {
-    const dataURL = canvas.toDataURL('image/png');
-    const img = new Image();
-    img.onload = () => {
-      state.stash.push({
-        img,
-        dataURL,
-        name: `暂存 ${state.stash.length + 1}`,
-        width: canvas.width,
-        height: canvas.height
-      });
-      updateStashUI();
-      state.images = [];
-      updateUI();
-      render();
-    };
-    img.src = dataURL;
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        ztools.showNotification('暂存失败: 无法生成图片数据');
+        return;
+      }
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+      img.onload = () => {
+        state.stash.push({
+          img,
+          dataURL: url,
+          name: `暂存 ${state.stash.length + 1}`,
+          width: canvas.width,
+          height: canvas.height
+        });
+        updateStashUI();
+        state.images = [];
+        updateUI();
+        render();
+      };
+      img.src = url;
+    }, 'image/png');
   }
 
   function updateStashUI() {
@@ -681,9 +709,13 @@
     const idx = parseInt(stashIdx);
     const item = state.stash[idx];
     if (!item) return true;
-    state.images.push({ img: item.img, name: item.name, width: item.width, height: item.height });
-    updateUI();
-    render();
+    const img = new Image();
+    img.onload = () => {
+      state.images.push({ img, name: item.name, width: item.width, height: item.height });
+      updateUI();
+      render();
+    };
+    img.src = item.dataURL;
     return true;
   }
 
