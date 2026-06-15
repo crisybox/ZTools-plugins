@@ -105,10 +105,13 @@ const validateForm = (): boolean => {
   return isValid
 }
 
+// 允许的URL协议白名单
+const ALLOWED_PROTOCOLS = ['http:', 'https:']
+
 const isValidUrl = (url: string): boolean => {
   try {
-    new URL(url)
-    return true
+    const urlObj = new URL(url)
+    return ALLOWED_PROTOCOLS.includes(urlObj.protocol)
   } catch {
     return false
   }
@@ -191,7 +194,7 @@ const fetchLogo = async () => {
 }
 
 const generateId = (): string => {
-  return Date.now().toString(36) + Math.random().toString(36).substr(2)
+  return crypto.randomUUID()
 }
 
 const handleSubmit = () => {

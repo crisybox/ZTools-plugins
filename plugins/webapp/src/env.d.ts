@@ -12,12 +12,6 @@ interface Services {
   getConfigPath: () => string
   readConfig: () => any[]
   saveConfig: (configs: any[]) => boolean
-  proxyFetch: (url: string, options?: RequestInit) => Promise<any>
-  setupAppProxy: (appId: string, targetUrl: string, username: string, password: string) => Promise<string>
-  getProxyUrl: (appId: string) => string | null
-  removeAppProxy: (appId: string) => void
-  getCookies: (appId: string) => boolean
-  clearCookies: (appId: string) => void
 }
 
 declare global {

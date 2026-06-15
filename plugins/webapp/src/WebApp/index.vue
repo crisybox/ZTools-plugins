@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import AppDialog from './AppDialog.vue'
 import SettingsDialog from './SettingsDialog.vue'
 
@@ -19,11 +19,64 @@ interface AppConfig {
 
 const apps = ref<AppConfig[]>([])
 const currentApp = ref<AppConfig | null>(null)
-const iframeSrc = ref('')
-const iframeLoading = ref(false)
+const webviewSrc = ref('')
+const webviewLoading = ref(false)
+const webviewRef = ref<HTMLElement | null>(null)
 const showAppDialog = ref(false)
 const showSettingsDialog = ref(false)
 const editApp = ref<AppConfig | null>(null)
+// 记录已认证过的app（使用对象存储appId）
+const authenticatedApps = ref<Record<string, boolean>>({})
+// Basic Auth加载阶段：idle → inline → reload → idle
+const authLoadingPhase = ref<'idle' | 'inline' | 'reload'>('idle')
+
+// 构建带Basic Auth的URL（内联认证）
+const buildUrlWithAuth = (url: string, auth?: { username: string; password: string }): string => {
+  if (!auth?.username) return url
+  try {
+    const urlObj = new URL(url)
+    const password = auth.password ? decodePassword(auth.password) : ''
+    urlObj.username = auth.username
+    urlObj.password = password
+    return urlObj.toString()
+  } catch {
+    return url
+  }
+}
+
+// 检测URL中是否包含内联凭据（user:pass@host）
+const hasInlineCredentials = (url: string): boolean => {
+  try {
+    const urlObj = new URL(url)
+    return !!(urlObj.username && urlObj.password)
+  } catch {
+    return false
+  }
+}
+
+// 从URL中移除内联凭据，返回原始URL
+const stripCredentials = (url: string): string => {
+  try {
+    const urlObj = new URL(url)
+    urlObj.username = ''
+    urlObj.password = ''
+    return urlObj.toString()
+  } catch {
+    return url
+  }
+}
+
+// 校验图标URL是否安全（仅允许http/https协议）
+const getSafeIconUrl = (url: string): string => {
+  if (!url) return ''
+  try {
+    const urlObj = new URL(url)
+    if (['http:', 'https:'].includes(urlObj.protocol)) {
+      return url
+    }
+  } catch {}
+  return ''
+}
 
 // 解码 Basic Auth 密码（仅用于显示/传递，不修改原始存储数据）
 const decodePassword = (encoded: string): string => {
@@ -131,39 +184,72 @@ const deleteApp = (id: string) => {
 
 // 选择应用
 const selectApp = async (app: AppConfig) => {
-  currentApp.value = app
-  iframeLoading.value = true
-  iframeSrc.value = '' // 先清空，避免显示旧内容
-
-  // 检查是否需要代理：有 Basic Auth 或已有 cookies
-  const hasBasicAuth = app.basicAuth?.username
-  const hasCookies = window.services?.getCookies?.(app.id)
-  const needProxy = hasBasicAuth || hasCookies
-
-  if (needProxy && window.services?.setupAppProxy) {
-    try {
-      // 密码在存储中是 base64 编码的，使用时解码
-      const password = hasBasicAuth ? decodePassword(app.basicAuth!.password) : ''
-      const proxyUrl = await window.services.setupAppProxy(
-        app.id,
-        app.url,
-        hasBasicAuth ? app.basicAuth!.username : '',
-        password
-      )
-      // 代理 URL 格式: http://127.0.0.1:{port}
-      iframeSrc.value = proxyUrl || app.url
-    } catch (e) {
-      console.error('[WebApp] 代理启动失败:', e)
-      iframeSrc.value = app.url // 降级直接加载
+  // 如果是同一个app，刷新页面
+  if (currentApp.value?.id === app.id) {
+    const webview = webviewRef.value as any
+    if (webview) {
+      webviewLoading.value = true
+      webview.reload()
     }
+    return
+  }
+
+  currentApp.value = app
+  webviewSrc.value = ''
+  await nextTick()
+
+  // Basic Auth应用：需要两阶段加载（内联认证 → 原始URL）
+  // 支持两种方式：1) basicAuth字段  2) URL中包含内联凭据
+  const hasBasicAuth = app.basicAuth?.username
+  const urlHasCredentials = hasInlineCredentials(app.url)
+  const needsAuth = hasBasicAuth || urlHasCredentials
+  const isAuthenticated = authenticatedApps.value[app.id]
+
+  if (needsAuth && !isAuthenticated) {
+    authLoadingPhase.value = 'inline'
+    webviewLoading.value = true
+    // 第一阶段：使用内联地址认证
+    const authUrl = hasBasicAuth ? buildUrlWithAuth(app.url, app.basicAuth) : app.url
+    webviewSrc.value = authUrl
   } else {
-    iframeSrc.value = app.url
+    // 已认证或无认证：直接加载（移除凭据）
+    authLoadingPhase.value = 'idle'
+    webviewLoading.value = true
+    const cleanUrl = urlHasCredentials ? stripCredentials(app.url) : app.url
+    webviewSrc.value = cleanUrl
   }
 }
 
-// iframe 加载完成回调
-const onIframeLoad = () => {
-  iframeLoading.value = false
+// webview 加载完成回调
+const onWebviewLoad = async () => {
+  // 第一阶段完成：内联认证成功
+  if (authLoadingPhase.value === 'inline') {
+    authenticatedApps.value[currentApp.value!.id] = true
+
+    // 进入第二阶段：使用无凭据的原始URL加载
+    authLoadingPhase.value = 'reload'
+    const cleanUrl = stripCredentials(currentApp.value!.url)
+    webviewSrc.value = ''
+    await nextTick()
+    webviewSrc.value = cleanUrl
+    return
+  }
+
+  // 第二阶段完成：原始URL加载成功
+  if (authLoadingPhase.value === 'reload') {
+    authLoadingPhase.value = 'idle'
+    webviewLoading.value = false
+    return
+  }
+
+  // 普通加载完成
+  webviewLoading.value = false
+}
+
+// webview 加载失败回调
+const onWebviewFail = (event: any) => {
+  authLoadingPhase.value = 'idle'
+  webviewLoading.value = false
 }
 
 // 关闭应用对话框
@@ -172,10 +258,101 @@ const closeAppDialog = () => {
   editApp.value = null
 }
 
+// 处理导入
+const handleImport = (data: { apps: AppConfig[], mode: 'merge' | 'replace' }) => {
+  if (data.mode === 'replace') {
+    apps.value = data.apps
+  } else {
+    // 合并模式
+    const existingIds = new Set(apps.value.map(a => a.id))
+    const newApps = data.apps.filter(a => !existingIds.has(a.id))
+    apps.value = [...apps.value, ...newApps]
+  }
+  saveApps()
+}
+
+// 拖动排序
+const dragIndex = ref<number | null>(null)
+
+const onDragStart = (index: number) => {
+  dragIndex.value = index
+}
+
+const onDragOver = (index: number, event: DragEvent) => {
+  event.preventDefault()
+}
+
+const onDrop = (index: number) => {
+  if (dragIndex.value === null || dragIndex.value === index) return
+
+  const item = apps.value.splice(dragIndex.value, 1)[0]
+  apps.value.splice(index, 0, item)
+  dragIndex.value = null
+  saveApps()
+}
+
+const onDragEnd = () => {
+  dragIndex.value = null
+}
+
+// 右键菜单处理
+const handleContextMenu = (event: MouseEvent, app: AppConfig) => {
+  event.preventDefault()
+  // Ctrl + 右键 = 打开开发者工具
+  if (event.ctrlKey) {
+    openDevTools()
+  } else {
+    // 普通右键 = 编辑应用
+    editExistingApp(app)
+  }
+}
+
+// 打开webview开发者工具
+const openDevTools = () => {
+  const webview = webviewRef.value as any
+  if (webview) {
+    webview.openDevTools()
+  }
+}
+
+// 存储事件监听器引用，用于清理
+let webviewElement: any = null
+
+const setupWebviewListeners = () => {
+  // 先移除旧的监听器，避免重复注册
+  if (webviewElement) {
+    webviewElement.removeEventListener('did-finish-load', onWebviewLoad)
+    webviewElement.removeEventListener('did-fail-load', onWebviewFail)
+  }
+  // 获取新的webview元素并注册监听器
+  webviewElement = webviewRef.value as any
+  if (webviewElement) {
+    webviewElement.addEventListener('did-finish-load', onWebviewLoad)
+    webviewElement.addEventListener('did-fail-load', onWebviewFail)
+  }
+}
+
 onMounted(() => {
   loadApps()
   // 页面加载时自动加载默认应用
   loadDefaultApp()
+})
+
+// 监听webviewSrc变化，重新设置监听器（带immediate确保初始时也触发）
+watch(webviewSrc, (newVal) => {
+  if (newVal) {
+    nextTick(() => {
+      setupWebviewListeners()
+    })
+  }
+}, { immediate: true })
+
+// 组件卸载时清理监听器
+onUnmounted(() => {
+  if (webviewElement) {
+    webviewElement.removeEventListener('did-finish-load', onWebviewLoad)
+    webviewElement.removeEventListener('did-fail-load', onWebviewFail)
+  }
 })
 </script>
 
@@ -197,17 +374,22 @@ onMounted(() => {
       <!-- 应用列表 -->
       <nav class="sidebar-nav">
         <button
-          v-for="app in apps"
+          v-for="(app, index) in apps"
           :key="app.id"
           class="sidebar-item"
-          :class="{ active: currentApp?.id === app.id }"
+          :class="{ active: currentApp?.id === app.id, 'dragging': dragIndex === index }"
+          draggable="true"
           @click="selectApp(app)"
-          @contextmenu.prevent="editExistingApp(app)"
+          @contextmenu.prevent="handleContextMenu($event, app)"
+          @dragstart="onDragStart(index)"
+          @dragover="onDragOver(index, $event)"
+          @drop="onDrop(index)"
+          @dragend="onDragEnd"
           :title="app.name"
         >
           <img
-            v-if="app.icon"
-            :src="app.icon"
+            v-if="getSafeIconUrl(app.icon)"
+            :src="getSafeIconUrl(app.icon)"
             class="sidebar-item-icon"
             :alt="app.name"
           />
@@ -230,20 +412,19 @@ onMounted(() => {
 
     <!-- 主内容区 -->
     <main class="main">
-      <!-- iframe视图 -->
-      <template v-if="currentApp && iframeSrc">
-        <iframe
-          :src="iframeSrc"
-          class="iframe"
-          frameborder="0"
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-          allowfullscreen
-          @load="onIframeLoad"
-        ></iframe>
+      <!-- webview视图 -->
+      <template v-if="currentApp && webviewSrc">
+        <webview
+          ref="webviewRef"
+          :src="webviewSrc"
+          class="webview"
+          allowpopups
+          disablewebsecurity
+        ></webview>
         <!-- Loading 遮罩 -->
-        <div v-if="iframeLoading" class="iframe-loading">
-          <div class="iframe-spinner"></div>
-          <span class="iframe-loading-text">加载中...</span>
+        <div v-if="webviewLoading" class="webview-loading">
+          <div class="webview-spinner"></div>
+          <span class="webview-loading-text">加载中...</span>
         </div>
       </template>
 
@@ -283,6 +464,7 @@ onMounted(() => {
       :apps="apps"
       @close="showSettingsDialog = false"
       @update="saveApps"
+      @import="handleImport"
     />
   </div>
 </template>
@@ -534,6 +716,11 @@ body {
   animation: pulse 2s ease-in-out infinite;
 }
 
+.sidebar-item.dragging {
+  opacity: 0.5;
+  transform: scale(0.9);
+}
+
 @keyframes pulse {
   0%, 100% {
     box-shadow: 0 0 0 0 var(--color-accent-subtle);
@@ -614,16 +801,16 @@ body {
 }
 
 /* ================================================
-   IFRAME
+   WEBVIEW
    ================================================ */
-.iframe {
+.webview {
   flex: 1;
   width: 100%;
   border: none;
   background: var(--color-bg);
 }
 
-.iframe-loading {
+.webview-loading {
   position: absolute;
   inset: 0;
   display: flex;
@@ -635,7 +822,7 @@ body {
   z-index: 10;
 }
 
-.iframe-spinner {
+.webview-spinner {
   width: 32px;
   height: 32px;
   border: 3px solid var(--color-border);
@@ -648,7 +835,7 @@ body {
   to { transform: rotate(360deg); }
 }
 
-.iframe-loading-text {
+.webview-loading-text {
   font-size: var(--text-sm);
   color: var(--color-text-muted);
 }

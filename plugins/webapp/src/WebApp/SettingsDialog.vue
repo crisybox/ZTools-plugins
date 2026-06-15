@@ -7,6 +7,7 @@ interface AppConfig {
   url: string
   icon: string
   description: string
+  defaultLoad: boolean
   createdAt: number
   basicAuth?: {
     username: string
@@ -27,6 +28,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'close'): void
   (e: 'update'): void
+  (e: 'import', data: { apps: AppConfig[], mode: 'merge' | 'replace' }): void
 }>()
 
 // 导入状态
@@ -42,6 +44,19 @@ const duplicateCount = computed(() => {
   return importData.value.apps.filter(a => existingIds.has(a.id)).length
 })
 
+// 允许的URL协议白名单
+const ALLOWED_PROTOCOLS = ['http:', 'https:']
+
+// 校验URL是否安全
+const isValidImportUrl = (url: string): boolean => {
+  try {
+    const urlObj = new URL(url)
+    return ALLOWED_PROTOCOLS.includes(urlObj.protocol)
+  } catch {
+    return false
+  }
+}
+
 // 处理文件选择
 const handleFileSelect = (event: Event) => {
   const input = event.target as HTMLInputElement
@@ -56,6 +71,12 @@ const handleFileSelect = (event: Event) => {
     return
   }
 
+  // 限制文件大小（1MB）
+  if (file.size > 1024 * 1024) {
+    fileError.value = '文件大小不能超过 1MB'
+    return
+  }
+
   const reader = new FileReader()
   reader.onload = (e) => {
     try {
@@ -67,7 +88,34 @@ const handleFileSelect = (event: Event) => {
         return
       }
 
-      const validApps = data.apps.filter(app => app.id && app.name && app.url)
+      // 限制导入数量（最多100个）
+      if (data.apps.length > 100) {
+        fileError.value = '单次导入不能超过 100 个应用'
+        return
+      }
+
+      // 过滤并验证应用配置
+      const validApps = data.apps.filter(app => {
+        // 基础字段验证
+        if (!app.id || !app.name || !app.url) return false
+        // URL协议验证
+        if (!isValidImportUrl(app.url)) return false
+        // 清理多余字段，只保留必要的
+        return true
+      }).map(app => ({
+        id: String(app.id).substring(0, 50),
+        name: String(app.name).substring(0, 100),
+        url: String(app.url),
+        icon: String(app.icon || '').substring(0, 500),
+        description: String(app.description || '').substring(0, 500),
+        defaultLoad: Boolean(app.defaultLoad),
+        createdAt: Number(app.createdAt) || Date.now(),
+        basicAuth: app.basicAuth ? {
+          username: String(app.basicAuth.username || ''),
+          password: String(app.basicAuth.password || '')
+        } : undefined
+      }))
+
       if (validApps.length === 0) {
         fileError.value = '文件中没有有效的应用配置'
         return
@@ -89,19 +137,11 @@ const handleFileSelect = (event: Event) => {
 const handleImport = () => {
   if (!importData.value) return
 
-  if (importMode.value === 'replace') {
-    // 保存现有应用的引用到 props.apps 的父组件
-    // 这里我们需要通过某种方式通知父组件更新
-    // 由于 props 是只读的，我们需要 emit 一个事件
-    const newApps = importData.value.apps
-    // 直接修改数组内容（通过 splice）
-    props.apps.splice(0, props.apps.length, ...newApps)
-  } else {
-    // 合并模式
-    const existingIds = new Set(props.apps.map(a => a.id))
-    const newApps = importData.value.apps.filter(a => !existingIds.has(a.id))
-    props.apps.push(...newApps)
-  }
+  // 通过emit事件通知父组件进行数据更新
+  emit('import', {
+    apps: importData.value.apps,
+    mode: importMode.value
+  })
 
   emit('update')
   resetImport()
