@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useConfigStore, type ReaderConfig } from '../../stores/config'
-import { useBookStore } from '../../stores/books'
+import { useBookStore, type Book } from '../../stores/books'
 import Toast from '../Bookshelf/Toast.vue'
 
 const emit = defineEmits<{ close: [] }>()
@@ -272,7 +272,7 @@ async function importBooks() {
     if (Array.isArray(data.books)) {
       let added = 0
       let skipped = 0
-      const newBooks = []
+      const newBooks: Book[] = []
       for (const book of data.books) {
         const filePathName = book.filePath.split(/[\\/]/).pop() ?? book.filePath
         const isDuplicate = bookStore.books.some(b => {
