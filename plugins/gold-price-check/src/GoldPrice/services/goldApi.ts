@@ -1,19 +1,19 @@
 /**
- * 金价数据服务层 v4
+ * 金价数据服务层 v5
  *
  * 数据源:
- *   - api.gold-api.com  : 实时金价 USD (免费, 无需Key)
- *   - Tmini API         : 实时金价 RMB + 品牌/银行/回收价 (国内)
- *   - freegoldapi.com   : 历史金价 1258-2026.02 (大文件, 24h缓存)
+ *   - api.gold-api.com      : 实时金价 USD (免费, 无需Key)
+ *   - Tmini API             : 实时金价 RMB + 品牌/银行/回收价 (国内)
+ *   - datasets/gold-prices  : 月度/年度均价 CSV (2000年起, 6h缓存)
  *
- * 本地快照机制 (填补历史API空白):
+ * 本地快照机制 (累积真实使用数据):
  *   - hourlySnapshots   : 每小时一条, 最多保留 48 条 → 日内24h走势
  *   - dailySnapshots    : 每天一条, 最多保留 400 条 → 近30天/月度走势
  *   - monthlySnapshots  : 每月一条, 最多保留 60 条  → 年度12月走势
  *
  * 缓存 TTL:
  *   - 实时金价 : 5 分钟
- *   - 历史大文件: 24 小时
+ *   - 历史 CSV : 6 小时 (源每日更新)
  */
 
 // ---- 类型定义 ----
@@ -75,6 +75,24 @@ export interface HistoricalPrice {
   source?: string;
 }
 
+/** datasets/gold-prices 月度均价记录 */
+export interface MonthlyGoldRecord {
+  date: string;   // YYYY-MM
+  price: number;  // 月均价 USD
+}
+
+/** datasets/gold-prices 年度均价记录 */
+export interface AnnualGoldRecord {
+  year: number;
+  price: number;  // 年均价 USD
+}
+
+/** 遗留历史数据 (datasets/gold-prices CSV解析结果) */
+export interface LegacyHistoricalData {
+  monthly: MonthlyGoldRecord[];  // 1833起月均价, 过滤到2000+
+  annual: AnnualGoldRecord[];    // 1833起年均价, 过滤到2000+
+}
+
 /** 小时级价格快照 (日内波动用) */
 export interface HourlySnapshot {
   time: string;   // YYYY-MM-DDTHH:00
@@ -105,20 +123,26 @@ export interface GoldPriceSnapshot {
 }
 
 // ---- 缓存 Key ----
-const KEY_TMINI       = 'gpc_tmini_v4';
-const KEY_REALTIME    = 'gpc_realtime_v4';
-const KEY_HISTORICAL  = 'gpc_historical_v4';
-const KEY_HOURLY      = 'gpc_hourly_v4';      // 小时快照
-const KEY_DAILY       = 'gpc_daily_v4';        // 每日快照
-const KEY_MONTHLY     = 'gpc_monthly_v4';      // 月度快照
+const KEY_TMINI       = 'gpc_tmini_v5';
+const KEY_REALTIME    = 'gpc_realtime_v5';
+const KEY_LEGACY      = 'gpc_legacy_v5';        // datasets/gold-prices CSV
+const KEY_HOURLY      = 'gpc_hourly_v5';         // 小时快照
+const KEY_DAILY       = 'gpc_daily_v5';           // 每日快照
+const KEY_MONTHLY     = 'gpc_monthly_v5';         // 月度快照
 
-const TTL_REALTIME   = 5 * 60 * 1000;           // 5 分钟
-const TTL_HISTORICAL = 24 * 60 * 60 * 1000;     // 24 小时
+const TTL_REALTIME   = 5 * 60 * 1000;             // 5 分钟
+const TTL_LEGACY     = 6 * 60 * 60 * 1000;        // 6 小时
+
+// 历史数据起始年份
+const LEGACY_START_YEAR = 2000;
 
 // ---- API 端点 ----
 const TMINI_API       = 'https://tmini.net/api/gold-price?type=json';
-const FREE_GOLD_API   = 'https://freegoldapi.com/data/latest.json';
 const GOLD_API_SPOT   = 'https://api.gold-api.com/price/XAU';
+
+// datasets/gold-prices monthly & annual CSV (raw GitHub)
+const DATASETS_MONTHLY_URL = 'https://raw.githubusercontent.com/datasets/gold-prices/main/data/monthly.csv';
+const DATASETS_ANNUAL_URL  = 'https://raw.githubusercontent.com/datasets/gold-prices/main/data/annual.csv';
 
 // ---- 内存缓存 (非 ZTools 环境) ----
 const mem = new Map<string, unknown>();
@@ -185,7 +209,75 @@ function load<T>(key: string, fallback: T): T {
   } catch { return fallback; }
 }
 
-// ---- API 调用 ----
+// ---- CSV 解析 ----
+
+/** 解析 monthly.csv: Date,Price */
+function parseMonthlyCsv(csv: string): MonthlyGoldRecord[] {
+  const lines = csv.trim().split('\n');
+  const records: MonthlyGoldRecord[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const row = lines[i].split(',');
+    if (row.length >= 2) {
+      const date = row[0].trim();
+      const price = parseFloat(row[1].trim());
+      if (date && !isNaN(price)) {
+        records.push({ date, price });
+      }
+    }
+  }
+  return records
+    .filter(r => {
+      const y = parseInt(r.date.substring(0, 4), 10);
+      return !isNaN(y) && y >= LEGACY_START_YEAR;
+    })
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/** 解析 annual.csv: Date,Price */
+function parseAnnualCsv(csv: string): AnnualGoldRecord[] {
+  const lines = csv.trim().split('\n');
+  const records: AnnualGoldRecord[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const row = lines[i].split(',');
+    if (row.length >= 2) {
+      const year = parseInt(row[0].trim(), 10);
+      const price = parseFloat(row[1].trim());
+      if (!isNaN(year) && !isNaN(price)) {
+        records.push({ year, price });
+      }
+    }
+  }
+  return records
+    .filter(r => r.year >= LEGACY_START_YEAR)
+    .sort((a, b) => a.year - b.year);
+}
+
+/** 从 datasets/gold-prices 获取月度+年度历史数据 (6h缓存) */
+export async function fetchLegacyHistoricalData(): Promise<LegacyHistoricalData> {
+  if (isCacheValid(KEY_LEGACY, TTL_LEGACY)) {
+    const c = getCache<LegacyHistoricalData>(KEY_LEGACY);
+    if (c && c.monthly.length > 0) return c;
+  }
+
+  const [monthlyResp, annualResp] = await Promise.all([
+    fetch(DATASETS_MONTHLY_URL),
+    fetch(DATASETS_ANNUAL_URL),
+  ]);
+
+  const [monthlyCsv, annualCsv] = await Promise.all([
+    monthlyResp.ok ? monthlyResp.text() : Promise.reject(new Error(`monthly.csv ${monthlyResp.status}`)),
+    annualResp.ok ? annualResp.text() : Promise.reject(new Error(`annual.csv ${annualResp.status}`)),
+  ]);
+
+  const data: LegacyHistoricalData = {
+    monthly: parseMonthlyCsv(monthlyCsv),
+    annual: parseAnnualCsv(annualCsv),
+  };
+
+  setCache(KEY_LEGACY, data);
+  console.log(`[金价] 遗留历史: ${data.monthly.length}个月 (${data.monthly[0]?.date ?? 'N/A'}~${data.monthly[data.monthly.length - 1]?.date ?? 'N/A'}), ${data.annual.length}年`);
+  return data;
+}
 
 /** 获取实时金价 USD (gold-api.com, 免费无key) */
 export async function fetchCurrentGoldUSD(): Promise<{ price: number; updatedAt: string }> {
@@ -212,26 +304,6 @@ export async function fetchRealtimeGoldPrice(): Promise<TminiResponse> {
   const data: TminiResponse = await resp.json();
   setCache(KEY_TMINI, data);
   return data;
-}
-
-/** 获取历史日线数据 (freegoldapi, USD, 24h缓存) */
-export async function fetchHistoricalPrices(): Promise<HistoricalPrice[]> {
-  if (isCacheValid(KEY_HISTORICAL, TTL_HISTORICAL)) {
-    const c = getCache<HistoricalPrice[]>(KEY_HISTORICAL);
-    if (c && c.length > 0) return c;
-  }
-  const resp = await fetch(FREE_GOLD_API);
-  if (!resp.ok) throw new Error(`历史API失败: ${resp.status}`);
-  const raw: HistoricalPrice[] = await resp.json();
-
-  // 只保留近5年
-  const cutoff = `${new Date().getFullYear() - 5}-01-01`;
-  const filtered = raw
-    .filter(d => d.date >= cutoff)
-    .map(d => ({ date: d.date, price: Number(d.price), source: 'freegoldapi' }));
-
-  setCache(KEY_HISTORICAL, filtered);
-  return filtered;
 }
 
 // ---- 快照管理 ----
@@ -305,13 +377,10 @@ export function getIntradayData(): HourlySnapshot[] {
     .sort((a, b) => a.time.localeCompare(b.time));
 }
 
-/** 合并 freegoldapi 历史 + 本地每日快照 (30天月度用) */
-export function mergeDaily(apiData: HistoricalPrice[]): HistoricalPrice[] {
-  const localDaily = load<HistoricalPrice[]>(KEY_DAILY, []);
-  const map = new Map<string, HistoricalPrice>();
-  for (const item of apiData) map.set(item.date, item);
-  for (const item of localDaily) map.set(item.date, item);
-  return Array.from(map.values()).sort((a, b) => a.date.localeCompare(b.date));
+/** 读取本地每日快照 (不再依赖FreeGoldAPI) */
+export function getDailySnapshots(): HistoricalPrice[] {
+  return load<HistoricalPrice[]>(KEY_DAILY, [])
+    .sort((a, b) => a.date.localeCompare(b.date));
 }
 
 /** 获取月度快照 (年度波动用) */
@@ -367,27 +436,40 @@ export function getRecentDailyData(data: HistoricalPrice[], days: number) {
 
 /**
  * 构建年度月线数据:
- *   1. 优先用本地 MonthlySnapshot
- *   2. 没有的月份从 historicalData 中聚合
+ *   1. 优先用本地 MonthlySnapshot (本年月度高/低更精确)
+ *   2. 从 monthly CSV 月均价补充历史月份
+ *   3. 降级: 从 historicalData (本地每日快照) 聚合
  */
 export function buildYearlyData(
   year: number,
-  historicalData: HistoricalPrice[],
+  monthlyData: MonthlyGoldRecord[],
+  dailyData: HistoricalPrice[],
 ): MonthlySnapshot[] {
   const localMonthly = getMonthlySnapshots();
   const result: MonthlySnapshot[] = [];
 
   for (let m = 1; m <= 12; m++) {
     const month = `${year}-${String(m).padStart(2, '0')}`;
-    // 先找本地快照
+    // 先找本地快照 (有 high/low)
     const localSnap = localMonthly.find(x => x.month === month);
     if (localSnap) {
       result.push(localSnap);
       continue;
     }
-    // 从历史数据聚合
+    // 从 monthly CSV 获取月均价
+    const csvRecord = monthlyData.find(x => x.date === month);
+    if (csvRecord) {
+      result.push({
+        month,
+        avgPrice: csvRecord.price,
+        highPrice: csvRecord.price,
+        lowPrice: csvRecord.price,
+      });
+      continue;
+    }
+    // 降级: 从本地每日快照聚合
     const prefix = `${month}-`;
-    const monthPrices = historicalData
+    const monthPrices = dailyData
       .filter(d => d && d.date && d.date.startsWith(prefix))
       .map(d => d.price);
     if (monthPrices.length > 0) {
@@ -402,19 +484,21 @@ export function buildYearlyData(
   return result;
 }
 
-/** 获取可用年份列表 */
-export function getAvailableYears(historicalData: HistoricalPrice[]): number[] {
+/** 获取可用年份列表 (monthly CSV + 本地快照) */
+export function getAvailableYears(
+  monthlyData: MonthlyGoldRecord[],
+  dailyData: HistoricalPrice[],
+): number[] {
   const years = new Set<number>();
-  // 从历史数据
-  for (const item of historicalData) {
+  // 从 monthly CSV
+  for (const item of monthlyData) {
     if (item && item.date) {
       const y = parseInt(item.date.substring(0, 4), 10);
       if (!isNaN(y)) years.add(y);
     }
   }
-  // 从本地快照
-  const localDaily = load<HistoricalPrice[]>(KEY_DAILY, []);
-  for (const item of localDaily) {
+  // 从本地每日快照
+  for (const item of dailyData) {
     if (item && item.date) {
       const y = parseInt(item.date.substring(0, 4), 10);
       if (!isNaN(y)) years.add(y);
@@ -426,16 +510,21 @@ export function getAvailableYears(historicalData: HistoricalPrice[]): number[] {
 }
 
 /** 获取指定年份的可用月份 */
-export function getAvailableMonths(historicalData: HistoricalPrice[], year: number): number[] {
+export function getAvailableMonths(
+  monthlyData: MonthlyGoldRecord[],
+  dailyData: HistoricalPrice[],
+  year: number,
+): number[] {
   const months = new Set<number>();
   const prefix = `${year}-`;
-  for (const item of historicalData) {
+  // 从 monthly CSV
+  for (const item of monthlyData) {
     if (item && item.date && item.date.startsWith(prefix)) {
       months.add(parseInt(item.date.substring(5, 7), 10));
     }
   }
-  const localDaily = load<HistoricalPrice[]>(KEY_DAILY, []);
-  for (const item of localDaily) {
+  // 从本地每日快照
+  for (const item of dailyData) {
     if (item && item.date && item.date.startsWith(prefix)) {
       months.add(parseInt(item.date.substring(5, 7), 10));
     }
@@ -444,9 +533,63 @@ export function getAvailableMonths(historicalData: HistoricalPrice[], year: numb
   return Array.from(months).sort((a, b) => b - a);
 }
 
+// ---- 遗留数据处理工具 ----
+
+/** 提取指定年份的月均价列表 (用于年度走势图) */
+export function getMonthlyPricesForYear(
+  monthlyData: MonthlyGoldRecord[],
+  year: number,
+): { month: string; price: number }[] {
+  const prefix = `${year}-`;
+  return monthlyData
+    .filter(r => r.date.startsWith(prefix))
+    .map(r => ({ month: r.date, price: r.price }));
+}
+
+/** 计算年度统计 (从 monthly CSV) */
+export function getYearlyStats(monthlyData: MonthlyGoldRecord[], year: number) {
+  const prices = monthlyData
+    .filter(r => r.date.startsWith(`${year}-`))
+    .map(r => r.price);
+  if (prices.length === 0) return null;
+  return {
+    year,
+    avgPrice: prices.reduce((a, b) => a + b, 0) / prices.length,
+    highPrice: Math.max(...prices),
+    lowPrice: Math.min(...prices),
+    months: prices.length,
+  };
+}
+
+/** 最近N年对比 (年表均值) */
+export function getYearlyComparison(annualData: AnnualGoldRecord[], n: number) {
+  return annualData.slice(-n);
+}
+
+/** 从 monthly CSV 获取最近N个月的均价 (用于日线数据不足时兜底) */
+export function getRecentMonthlyData(
+  monthlyData: MonthlyGoldRecord[],
+  months: number,
+): { date: string; price: number }[] {
+  return monthlyData
+    .slice(-months)
+    .map(r => ({ date: r.date, price: r.price }));
+}
+
+/** 从 monthly CSV 获取指定月份的均价 */
+export function getMonthAvgFromCsv(
+  monthlyData: MonthlyGoldRecord[],
+  year: number,
+  month: number,
+): number | null {
+  const target = `${year}-${String(month).padStart(2, '0')}`;
+  const record = monthlyData.find(r => r.date === target);
+  return record ? record.price : null;
+}
+
 // ---- 清除缓存 ----
 export function clearCache(): void {
-  const keys = [KEY_TMINI, KEY_REALTIME, KEY_HISTORICAL];
+  const keys = [KEY_TMINI, KEY_REALTIME, KEY_LEGACY];
   if (isZTools) {
     for (const k of keys) {
       try { db()?.removeItem(k); db()?.removeItem(`${k}_ts`); } catch { /* */ }

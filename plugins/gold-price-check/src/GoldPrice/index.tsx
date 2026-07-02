@@ -1,10 +1,10 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   fetchRealtimeGoldPrice,
-  fetchHistoricalPrices,
   fetchCurrentGoldUSD,
+  fetchLegacyHistoricalData,
   extractGoldSnapshot,
-  mergeDaily,
+  getDailySnapshots,
   appendHourlySnapshot,
   appendDailySnapshot,
   updateMonthlySnapshot,
@@ -15,11 +15,17 @@ import {
   buildYearlyData,
   getAvailableMonths,
   getAvailableYears,
+  getMonthlyPricesForYear,
+  getYearlyStats,
+  getYearlyComparison,
+  getRecentMonthlyData,
+  getMonthAvgFromCsv,
   clearCache,
   type GoldPriceSnapshot,
   type HistoricalPrice,
   type HourlySnapshot,
   type MonthlySnapshot,
+  type LegacyHistoricalData,
   type StorePrice,
   type BankPrice,
   type RecyclePrice,
@@ -58,20 +64,24 @@ export default function GoldPrice() {
   const [recycle, setRecycle]         = useState<RecyclePrice[]>([]);
   const [historical, setHistorical]   = useState<HistoricalPrice[]>([]);
 
+  // 遗留历史数据 (datasets/gold-prices)
+  const [legacyData, setLegacyData]   = useState<LegacyHistoricalData | null>(null);
+
   // 月份/年份选择
   const now = new Date();
   const [selectedYear, setSelectedYear]   = useState(now.getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1);
   const [selectedYear2, setSelectedYear2] = useState(now.getFullYear());
 
-  // 可用选项
+  // 可用选项 (基于 monthly CSV + 本地每日快照)
+  const monthlyLegacy = legacyData?.monthly ?? [];
   const availableYears = useMemo(
-    () => getAvailableYears(historical),
-    [historical],
+    () => getAvailableYears(monthlyLegacy, historical),
+    [monthlyLegacy, historical],
   );
   const availableMonths = useMemo(
-    () => getAvailableMonths(historical, selectedYear),
-    [historical, selectedYear],
+    () => getAvailableMonths(monthlyLegacy, historical, selectedYear),
+    [monthlyLegacy, historical, selectedYear],
   );
 
   // 自动修正选中月份
@@ -87,8 +97,8 @@ export default function GoldPrice() {
     setError(null);
 
     try {
-      // 并行请求: Tmini(RMB) + 实时USD + 历史日线（每个独立容错）
-      const [tminiData, usdSpot, histData] = await Promise.all([
+      // 并行请求: Tmini(RMB) + 实时USD + 遗留月/年历史（每个独立容错）
+      const [tminiData, usdSpot, legacy] = await Promise.all([
         fetchRealtimeGoldPrice().catch((err) => {
           console.error('获取RMB金价失败:', err);
           return null;
@@ -97,7 +107,10 @@ export default function GoldPrice() {
           console.error('获取USD金价失败:', err);
           return null;
         }),
-        fetchHistoricalPrices().catch(() => [] as HistoricalPrice[]),
+        fetchLegacyHistoricalData().catch((err) => {
+          console.error('获取遗留历史数据失败:', err);
+          return null;
+        }),
       ]);
 
       if (!tminiData && !usdSpot) {
@@ -124,17 +137,22 @@ export default function GoldPrice() {
         updateMonthlySnapshot(usdPrice);
       }
 
-      // 合并历史 + 本地每日快照
-      const merged = mergeDaily(histData);
-      setHistorical(merged);
+      // 遗留月/年历史
+      if (legacy) {
+        setLegacyData(legacy);
+      }
+
+      // 本地每日快照 (不再依赖外部API)
+      const daily = getDailySnapshots();
+      setHistorical(daily);
 
       setLastUpdate(new Date().toLocaleTimeString('zh-CN'));
       setLoading(false);
 
       console.log(
         `[金价] USD ${usdSpot ? `$${usdSpot.price.toFixed(2)}` : 'N/A'} | ` +
-        `历史 ${histData.length} 条 (截止 ${histData[histData.length - 1]?.date ?? 'N/A'}) | ` +
-        `合并 ${merged.length} 条 (截止 ${merged[merged.length - 1]?.date ?? 'N/A'})`
+        `本地日快照 ${daily.length} 条 (${daily[0]?.date ?? 'N/A'}~${daily[daily.length - 1]?.date ?? 'N/A'}) | ` +
+        `遗留 ${legacy?.monthly.length ?? 0} 月 / ${legacy?.annual.length ?? 0} 年`
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : '加载失败';
@@ -167,22 +185,35 @@ export default function GoldPrice() {
     [lastUpdate], // 每次刷新重算
   );
 
-  /** 月度：近30天每日数据 */
-  const last30Days = useMemo(
-    () => getRecentDailyData(historical, 30),
-    [historical],
-  );
+  /** 月度：近30天每日数据，CSV月均价兜底 */
+  const last30Days = useMemo(() => {
+    const daily = getRecentDailyData(historical, 30);
+    if (daily.length >= 2) return daily;
+    // 本地日快照不足，用 monthly CSV 最近30个月兜底
+    return getRecentMonthlyData(monthlyLegacy, 30);
+  }, [historical, monthlyLegacy]);
 
-  /** 月度面板：选中月的每日走势 */
-  const monthData = useMemo(
-    () => filterMonthData(historical, selectedYear, selectedMonth),
-    [historical, selectedYear, selectedMonth],
-  );
+  /** 月度面板：选中月每日走势，CSV月均价兜底 */
+  const monthData = useMemo(() => {
+    const daily = filterMonthData(historical, selectedYear, selectedMonth);
+    if (daily.length > 0) return daily;
+    // 本地无日快照，用 monthly CSV 该月均价兜底
+    const csvPrice = getMonthAvgFromCsv(monthlyLegacy, selectedYear, selectedMonth);
+    return csvPrice !== null
+      ? [{ date: `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`, price: csvPrice }]
+      : [];
+  }, [historical, monthlyLegacy, selectedYear, selectedMonth]);
 
-  /** 年度：指定年份12个月数据 */
+  /** 年度：指定年份12个月数据 (monthly CSV + 本地快照) */
   const yearData: MonthlySnapshot[] = useMemo(
-    () => buildYearlyData(selectedYear2, historical),
-    [historical, selectedYear2, lastUpdate],
+    () => buildYearlyData(selectedYear2, monthlyLegacy, historical),
+    [monthlyLegacy, historical, selectedYear2, lastUpdate],
+  );
+
+  /** 历年对比 (最近10年) */
+  const yearlyCompare = useMemo(
+    () => legacyData ? getYearlyComparison(legacyData.annual, 10) : [],
+    [legacyData],
   );
 
   // ====== 面板渲染 ======
@@ -454,14 +485,33 @@ export default function GoldPrice() {
           );
         })()}
 
-        {/* 数据说明 */}
-        {selectedYear2 >= new Date().getFullYear() && (
-          <div className="gold-hint-box">
-            <p>💡 <b>{selectedYear2}年</b>历史月线数据来源：</p>
-            <ul>
-              <li>2026年2月前：FreeGoldAPI 历史数据</li>
-              <li>2026年3月起：本地每月累积快照（实际使用时间越长数据越完整）</li>
-            </ul>
+        {/*
+          历年均价对比
+        */}
+        {yearlyCompare.length > 1 && (
+          <div className="gold-chart-section">
+            <h3 className="gold-section-title">
+              历年均价对比 (最近{yearlyCompare.length}年)
+              <span className="gold-chart-subtitle">USD/盎司</span>
+            </h3>
+            <div className="gold-yearly-compare">
+              {yearlyCompare.map(item => {
+                const maxPrice = Math.max(...yearlyCompare.map(i => i.price));
+                const pct = (item.price / maxPrice) * 100;
+                return (
+                  <div className="gold-yearly-row" key={item.year}>
+                    <span className="gold-yearly-year">{item.year}</span>
+                    <div className="gold-yearly-bar-wrap">
+                      <div
+                        className="gold-yearly-bar"
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                    <span className="gold-yearly-value">${item.price.toFixed(0)}</span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
       </div>
@@ -536,8 +586,6 @@ export default function GoldPrice() {
 
       {/* 底栏 */}
       <div className="gold-footer">
-        <span>数据源: Tmini(CNY) · GoldAPI(USD实时) · FreeGoldAPI(USD历史)</span>
-        <span className="gold-footer-dot">·</span>
         <span>5分钟自动刷新</span>
       </div>
     </div>

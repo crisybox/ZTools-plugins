@@ -660,6 +660,55 @@
   font-size: 13px;
 }
 
+/* ===== 历年均价对比 ===== */
+.gold-yearly-compare {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0;
+}
+
+.gold-yearly-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.gold-yearly-year {
+  width: 40px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--gold-text);
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.gold-yearly-bar-wrap {
+  flex: 1;
+  height: 18px;
+  background: #f3f4f6;
+  border-radius: 3px;
+  overflow: hidden;
+  position: relative;
+}
+
+.gold-yearly-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #d4a84b, #c9a84c, #b8860b);
+  border-radius: 3px;
+  min-width: 2px;
+  transition: width 0.5s ease;
+}
+
+.gold-yearly-value {
+  width: 56px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--gold-text);
+  text-align: right;
+  flex-shrink: 0;
+}
+
 /* ===== 底部 ===== */
 .gold-footer {
   display: flex;
