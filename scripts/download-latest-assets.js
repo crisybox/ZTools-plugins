@@ -9,6 +9,8 @@ import { createHash } from 'node:crypto';
 
 const DIST_DIR = 'dist';
 const PUBLIC_ASSET_BASE_URL = 'https://ztools.zosen.link';
+const ZTOOLS_SERVER_URL = process.env.ZTOOLS_SERVER_URL || 'https://z-tools.top';
+const ZTOOLS_SERVER_TOKEN = process.env.ZTOOLS_SERVER_TOKEN || '';
 const BASE64_IMAGE_OUTPUT_DIR = join(DIST_DIR, 'images', 'logo');
 const BASE64_IMAGE_PUBLIC_PATH = 'images/logo';
 const DOWNLOAD_MAX_ATTEMPTS = 5;
@@ -26,6 +28,7 @@ function printUsage() {
   匿名获取当前 GitHub 仓库的最新 release，并将所有 assets 下载到 dist 目录。
   会将 JSON 中的 base64 图片转换为图片文件放入 dist/images/logo，
   并替换为 EdgeOne 静态访问地址。
+  如果存在 ZTOOLS_SERVER_TOKEN，会在最后把 dist/plugins.json 同步到 ZTools 平台。
   仓库信息优先读取 GITHUB_REPOSITORY=owner/repo，否则从 git remote origin 解析。
 `);
 }
@@ -407,6 +410,95 @@ async function updateBase64ImagesInJsonFiles() {
   console.log(`✓ 已转换 ${changedImageCount} 个 base64 图片，生成 ${convertedImages.size} 个 EdgeOne 静态图片文件，更新 ${changedFileCount} 个 JSON 文件`);
 }
 
+function normalizeString(value) {
+  if (value === undefined || value === null) {
+    return '';
+  }
+
+  return String(value).trim();
+}
+
+function normalizeNullableString(value) {
+  const normalized = normalizeString(value);
+  return normalized || null;
+}
+
+function normalizeSize(value) {
+  const size = Number(value);
+  if (!Number.isFinite(size) || size < 0) {
+    return 0;
+  }
+
+  return Math.trunc(size);
+}
+
+function extractPluginsList(pluginsJson) {
+  if (Array.isArray(pluginsJson)) {
+    return pluginsJson;
+  }
+
+  if (pluginsJson && Array.isArray(pluginsJson.plugins)) {
+    return pluginsJson.plugins;
+  }
+
+  throw new Error('plugins.json 格式不正确，期望为插件数组或包含 plugins 数组的对象');
+}
+
+function normalizePluginForServer(plugin) {
+  return {
+    title: normalizeString(plugin.title),
+    description: normalizeString(plugin.description),
+    version: normalizeString(plugin.version),
+    author: normalizeString(plugin.author),
+    logo: normalizeString(plugin.logo),
+    name: normalizeString(plugin.name),
+    homepage: normalizeNullableString(plugin.homepage),
+    downloadUrl: normalizeString(plugin.downloadUrl || plugin.downloadURL || plugin.download_url),
+    size: normalizeSize(plugin.size),
+  };
+}
+
+function getThirdPartyPluginsEndpoint() {
+  return `${ZTOOLS_SERVER_URL.replace(/\/+$/, '')}/api/third-party/plugins`;
+}
+
+async function syncPluginsToZToolsServer() {
+  if (!ZTOOLS_SERVER_TOKEN) {
+    console.warn('未设置 ZTOOLS_SERVER_TOKEN，跳过同步 ZTools 平台插件数据');
+    return;
+  }
+
+  const pluginsJsonPath = join(DIST_DIR, 'plugins.json');
+  if (!existsSync(pluginsJsonPath)) {
+    console.warn(`未找到 ${pluginsJsonPath}，跳过同步 ZTools 平台插件数据`);
+    return;
+  }
+
+  const pluginsJson = JSON.parse(await readFile(pluginsJsonPath, 'utf-8'));
+  const plugins = extractPluginsList(pluginsJson).map(normalizePluginForServer);
+  const endpoint = getThirdPartyPluginsEndpoint();
+
+  console.log(`同步 ${plugins.length} 个插件到 ZTools 平台...`);
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${ZTOOLS_SERVER_TOKEN}`,
+      'Content-Type': 'application/json',
+      'User-Agent': 'ztools-plugins-assets-downloader',
+    },
+    body: JSON.stringify(plugins),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`同步 ZTools 平台插件数据失败: ${response.status} ${response.statusText} ${body}`);
+  }
+
+  const result = await response.json();
+  console.log(`✓ 已同步 ZTools 平台插件数据: total=${result.total}, created=${result.created}, updated=${result.updated}`);
+}
+
 async function main() {
   const args = new Set(process.argv.slice(2));
   if (args.has('--help') || args.has('-h')) {
@@ -461,6 +553,7 @@ async function main() {
 
   await updatePluginsJsonDownloadUrls();
   await updateBase64ImagesInJsonFiles();
+  await syncPluginsToZToolsServer();
 
   console.log(`\n✓ 所有 assets 已下载到 ${DIST_DIR} 目录`);
 }
