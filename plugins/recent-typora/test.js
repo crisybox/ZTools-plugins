@@ -1,0 +1,62 @@
+const assert = require('assert')
+const fs = require('fs')
+const {
+  createListFeature,
+  decodeHistory,
+  getHistoryCandidates,
+  getTyporaLaunch,
+  normalizeDate,
+  parseHistory,
+  toListResults
+} = require('./preload')
+
+const fixture = {
+  recentFolder: [{ name: 'folder', path: '/tmp/folder', date: '1970-01-01T00:00:00.020Z' }],
+  recentDocument: [{ name: 'file.md', path: '/tmp/file.md', date: 30 }]
+}
+const json = JSON.stringify(fixture)
+
+assert.strictEqual(decodeHistory(Buffer.from(json).toString('hex')), json)
+assert.strictEqual(decodeHistory(Buffer.from(json).toString('base64')), json)
+assert.strictEqual(decodeHistory(json), json)
+
+const parsed = parseHistory(Buffer.from(json).toString('hex'))
+assert.deepStrictEqual(parsed.map((item) => item.name), ['file.md', 'folder'])
+assert.strictEqual(parsed[1].date, 20)
+assert.strictEqual(normalizeDate('2026-07-07T05:45:41.246Z'), 1783403141246)
+assert.strictEqual(toListResults(parsed)[0].description, '/tmp/file.md')
+assert.strictEqual(toListResults(parsed)[0].icon, 'markdown-icon.png')
+assert.strictEqual(toListResults(parsed)[1].icon, 'folder-icon.png')
+assert.deepStrictEqual(toListResults(parsed, 'folder').map((item) => item.title), ['folder'])
+assert.strictEqual(toListResults(parsed, null).length, 2)
+
+assert.ok(getHistoryCandidates('win32', { APPDATA: 'C:\\Data' }, 'C:\\Users\\test')[0].endsWith('Typora\\history.data'))
+assert.ok(getHistoryCandidates('linux', {}, '/home/test')[0].endsWith('.config/Typora/history.data'))
+assert.ok(getHistoryCandidates('darwin', {}, '/Users/test')[0].includes('abnerworks.Typora'))
+assert.deepStrictEqual(getTyporaLaunch('/notes', 'linux', {}), { command: 'typora', args: ['/notes'] })
+assert.deepStrictEqual(getTyporaLaunch('/notes', 'darwin', {}), { command: 'open', args: ['-a', 'Typora', '/notes'] })
+assert.deepStrictEqual(getTyporaLaunch('C:\\notes', 'win32', { TYPORA_EXECUTABLE: 'D:\\Typora.exe' }), {
+  command: 'D:\\Typora.exe',
+  args: ['C:\\notes']
+})
+
+const feature = createListFeature({})
+assert.strictEqual(feature.mode, 'list')
+assert.strictEqual(typeof feature.args.enter, 'function')
+assert.strictEqual(typeof feature.args.search, 'function')
+assert.strictEqual(typeof feature.args.select, 'function')
+
+for (const asset of ['logo.png', 'folder-icon.png', 'markdown-icon.png']) {
+  assert.ok(fs.existsSync(asset), `缺少资源文件：${asset}`)
+}
+
+if (process.platform === 'win32') {
+  const realHistory = getHistoryCandidates().find((candidate) => fs.existsSync(candidate))
+  if (realHistory) {
+    const realItems = parseHistory(fs.readFileSync(realHistory, 'utf8'))
+    assert.ok(realItems.length > 0, '本机 history.data 应至少包含一条记录')
+    assert.ok(realItems.every((item, index) => index === 0 || realItems[index - 1].date >= item.date))
+  }
+}
+
+console.log('All tests passed.')
