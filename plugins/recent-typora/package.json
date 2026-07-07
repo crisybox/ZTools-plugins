@@ -1,9 +1,8 @@
 {
-  "$schema": "https://www.schemastore.org/package.json",
   "name": "recent-typora",
   "version": "1.0.0",
   "private": true,
-  "description": "按最近打开顺序列出 Typora 的文件和文件夹",
+  "description": "按时间顺序列出 Typora 最近打开的文件和文件夹。",
   "scripts": {
     "test": "node test.js"
   },
