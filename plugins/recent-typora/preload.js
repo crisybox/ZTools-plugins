@@ -47,6 +47,9 @@ function normalizeDate(value) {
 
 function parseHistory(raw) {
   const data = JSON.parse(decodeHistory(raw))
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error('history.data 解析结果不是有效的 JSON 对象')
+  }
   const records = []
 
   for (const [key, type] of [['recentFolder', 'folder'], ['recentDocument', 'file']]) {
@@ -54,7 +57,7 @@ function parseHistory(raw) {
     for (const item of items) {
       if (!item || typeof item.path !== 'string' || !item.path.trim()) continue
       records.push({
-        name: typeof item.name === 'string' && item.name.trim() ? item.name.trim() : path.basename(item.path),
+        name: typeof item.name === 'string' && item.name.trim() ? item.name.trim() : (path.basename(item.path) || item.path),
         path: item.path,
         date: normalizeDate(item.date),
         type

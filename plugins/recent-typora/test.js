@@ -23,6 +23,18 @@ assert.strictEqual(decodeHistory(json), json)
 const parsed = parseHistory(Buffer.from(json).toString('hex'))
 assert.deepStrictEqual(parsed.map((item) => item.name), ['file.md', 'folder'])
 assert.strictEqual(parsed[1].date, 20)
+
+for (const invalidJsonValue of ['null', '[]', '"invalid"', '-1']) {
+  assert.throws(
+    () => parseHistory(invalidJsonValue),
+    { message: 'history.data 解析结果不是有效的 JSON 对象' }
+  )
+}
+
+const roots = parseHistory(JSON.stringify({
+  recentFolder: [{ path: '/' }, { path: 'C:\\' }]
+}))
+assert.deepStrictEqual(roots.map((item) => item.name), ['/', 'C:\\'])
 assert.strictEqual(normalizeDate('2026-07-07T05:45:41.246Z'), 1783403141246)
 assert.strictEqual(toListResults(parsed)[0].description, '/tmp/file.md')
 assert.strictEqual(toListResults(parsed)[0].icon, 'markdown-icon.png')
