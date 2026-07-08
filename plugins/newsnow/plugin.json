@@ -2,7 +2,7 @@
   "name": "newsnow",
   "title": "NewsNow",
   "description": "实时新闻快讯与多平台热搜订阅",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "author": "crisy",
   "logo": "logo.png",
   "main": "index.html",
