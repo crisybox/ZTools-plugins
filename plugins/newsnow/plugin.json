@@ -1,0 +1,37 @@
+{
+  "name": "newsnow",
+  "title": "NewsNow",
+  "description": "实时新闻快讯与多平台热搜订阅",
+  "version": "1.0.0",
+  "author": "crisy",
+  "logo": "logo.png",
+  "main": "index.html",
+  "preload": "preload.js",
+  "pluginSetting": {
+    "single": true,
+    "height": 640
+  },
+  "features": [
+    {
+      "code": "newsnow-news",
+      "explain": "NewsNow - 实时新闻快讯",
+      "cmds": [
+        "新闻"
+      ]
+    },
+    {
+      "code": "newsnow-hot",
+      "explain": "NewsNow - 多平台热搜热榜",
+      "cmds": [
+        "热搜"
+      ]
+    },
+    {
+      "code": "newsnow-browse",
+      "explain": "NewsNow - 看一看订阅频道",
+      "cmds": [
+        "看一看"
+      ]
+    }
+  ]
+}
